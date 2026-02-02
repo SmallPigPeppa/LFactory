@@ -2148,7 +2148,9 @@ register_template(
 
 register_template(
     name="youtu_vl",
-    format_user=StringFormatter(slots=["<|begin_of_text|>user\n{{content}}<|end_of_text|>\n<|begin_of_text|>assistant\n"]),
+    format_user=StringFormatter(
+        slots=["<|begin_of_text|>user\n{{content}}<|end_of_text|>\n<|begin_of_text|>assistant\n"]
+    ),
     format_assistant=StringFormatter(slots=["{{content}}<|end_of_text|>\n"]),
     format_system=StringFormatter(slots=["<|begin_of_text|>system\n{{content}}<|end_of_text|>\n"]),
     default_system="You are a helpful assistant.",

@@ -2161,9 +2161,8 @@ class LFMVLPlugin(BasePlugin):
 
 @dataclass
 class YoutuVLPlugin(BasePlugin):
-    r"""
-    Plugin for Youtu-VL vision-language models.
-    """
+    r"""Plugin for Youtu-VL vision-language models."""
+
     vision_bos_token: str = "<|vision_start|>"
     vision_eos_token: str = "<|vision_end|>"
 

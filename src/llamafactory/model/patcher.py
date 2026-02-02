@@ -227,7 +227,7 @@ def patch_model(
         if getattr(model.config, "model_type", None) == "gemma3n":
             setattr(model_args, "disable_gradient_checkpointing", True)
 
-        if getattr(model.config, "model_type", None) =="youtu_vl":
+        if getattr(model.config, "model_type", None) == "youtu_vl":
             patch_youtu_vl_model(model)
 
         prepare_model_for_training(model, model_args)
