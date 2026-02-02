@@ -2182,19 +2182,12 @@ class YoutuVLPlugin(BasePlugin):
 
         for message in messages:
             content = message["content"]
-            while IMAGE_PLACEHOLDER in content:
-                content = content.replace(
-                    IMAGE_PLACEHOLDER,
-                    f"{self.vision_bos_token}{self.image_token}{self.vision_eos_token}",
-                    1,
-                )
-
-            while VIDEO_PLACEHOLDER in content:
-                content = content.replace(
-                    VIDEO_PLACEHOLDER,
-                    f"{self.vision_bos_token}{self.video_token}{self.vision_eos_token}",
-                    1,
-                )
+            content = content.replace(
+                IMAGE_PLACEHOLDER, f"{self.vision_bos_token}{self.image_token}{self.vision_eos_token}"
+            )
+            content = content.replace(
+                VIDEO_PLACEHOLDER, f"{self.vision_bos_token}{self.video_token}{self.vision_eos_token}"
+            )
 
             message["content"] = content
 

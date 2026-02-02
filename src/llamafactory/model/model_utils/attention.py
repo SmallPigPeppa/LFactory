@@ -58,10 +58,7 @@ def configure_attn_implementation(config: "PretrainedConfig", model_args: "Model
             )
 
     if getattr(config, "model_type", None) in ["youtu", "youtu_vl"]:
-        if model_args.flash_attn == AttentionFunction.AUTO:
-            logger.warning_rank0("Youtu-VL does not support SDPA, forcing eager attention.")
-            model_args.flash_attn = AttentionFunction.DISABLED
-        elif model_args.flash_attn == AttentionFunction.SDPA:
+        if model_args.flash_attn in (AttentionFunction.AUTO, AttentionFunction.SDPA):
             logger.warning_rank0("Youtu-VL does not support SDPA, forcing eager attention.")
             model_args.flash_attn = AttentionFunction.DISABLED
 
