@@ -25,8 +25,8 @@ import torch
 import torch.nn.functional as F
 from transformers import Trainer
 from trl import DPOTrainer
+from trl.models.utils import prepare_deepspeed, prepare_fsdp
 from trl.trainer import disable_dropout_in_model
-from trl.models.utils import prepare_fsdp, prepare_deepspeed
 from typing_extensions import override
 
 from ...extras.constants import IGNORE_INDEX
@@ -100,6 +100,7 @@ class CustomDPOTrainer(DPOTrainer):
             elif self.is_fsdp_enabled:
                 if self.accelerator.is_fsdp2:
                     from accelerate.utils.fsdp_utils import fsdp2_prepare_model
+
                     self.ref_model = fsdp2_prepare_model(self.accelerator, self.ref_model)
                 else:
                     self.ref_model = prepare_fsdp(self.ref_model, self.accelerator)
