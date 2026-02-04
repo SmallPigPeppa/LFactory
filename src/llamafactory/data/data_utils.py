@@ -35,7 +35,7 @@ SLOTS = list[Union[str, set[str], dict[str, str]]]
 
 
 @unique
-class Role(str, Enum):
+class Role(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
