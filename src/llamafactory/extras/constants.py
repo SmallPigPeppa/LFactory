@@ -110,7 +110,7 @@ V_HEAD_WEIGHTS_NAME = "value_head.bin"
 V_HEAD_SAFE_WEIGHTS_NAME = "value_head.safetensors"
 
 
-class AttentionFunction(str, Enum):
+class AttentionFunction(StrEnum):
     AUTO = "auto"
     DISABLED = "disabled"
     SDPA = "sdpa"
@@ -118,21 +118,21 @@ class AttentionFunction(str, Enum):
     FA3 = "fa3"
 
 
-class EngineName(str, Enum):
+class EngineName(StrEnum):
     HF = "huggingface"
     VLLM = "vllm"
     SGLANG = "sglang"
     KT = "ktransformers"
 
 
-class DownloadSource(str, Enum):
+class DownloadSource(StrEnum):
     DEFAULT = "hf"
     MODELSCOPE = "ms"
     OPENMIND = "om"
 
 
 @unique
-class QuantizationMethod(str, Enum):
+class QuantizationMethod(StrEnum):
     r"""Borrowed from `transformers.utils.quantization_config.QuantizationMethod`."""
 
     BNB = "bnb"
@@ -146,7 +146,7 @@ class QuantizationMethod(str, Enum):
     FP8 = "fp8"
 
 
-class RopeScaling(str, Enum):
+class RopeScaling(StrEnum):
     LINEAR = "linear"
     DYNAMIC = "dynamic"
     YARN = "yarn"
