@@ -1840,6 +1840,10 @@ register_model_group(
             DownloadSource.DEFAULT: "openbmb/MiniCPM-o-2_6",
             DownloadSource.MODELSCOPE: "OpenBMB/MiniCPM-o-2_6",
         },
+        "MiniCPM-o-4_5": {
+            DownloadSource.DEFAULT: "openbmb/MiniCPM-o-4_5",
+            DownloadSource.MODELSCOPE: "OpenBMB/MiniCPM-o-4_5",
+        },
     },
     template="minicpm_o",
     multimodal=True,
