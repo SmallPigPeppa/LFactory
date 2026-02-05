@@ -111,6 +111,22 @@ class FSDP2Engine:
             logger.info(f"Applying per-layer FSDP to {layer_cls.__name__}")
             transformer_layer_cls_to_wrap = {layer_cls}
 
+        lora_modules = []
+        for module in model.modules():
+            if len(list(module.children())) != 0:
+                continue
+            if any(param.requires_grad for param in module.parameters(recurse=False)):
+                lora_modules.append(module)
+
+        for module in lora_modules:
+            fully_shard(
+                module,
+                mesh=self.fsdp_mesh,
+                reshard_after_forward=self.reshard_after_forward,
+                mp_policy=mp_policy,
+                offload_policy=CPUOffloadPolicy(pin_memory=self.pin_memory) if self.offload_params else None,
+            )
+
         for name, module in model.named_modules():
             should_wrap = False
 

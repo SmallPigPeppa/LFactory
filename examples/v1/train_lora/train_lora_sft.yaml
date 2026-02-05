@@ -1,32 +1,37 @@
-model: Qwen/Qwen3-0.6B
+model: Qwen/Qwen3-4B
 trust_remote_code: true
 model_class: llm
 
 template: qwen3_nothink
 
+# PEFT Configuration
+peft_config:
+  name: lora
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules: all
+
+# Kernel Config
 kernel_config:
   name: auto
-  include_kernels: auto # choice: null/true/false/auto/kernel_id1,kernel_id2,kernel_id3, default is null
+  include_kernels: auto
 
-quant_config: null
-
+# FSDP Config
 dist_config:
   name: fsdp2
-  dcp_path: null # /mnt/f/pretrain_models/Qwen3-0.6B-dcp
-
-init_config:
-  name: init_on_meta
+  dcp_path: null
 
 ### data
 train_dataset: data/v1_sft_demo.yaml
 
 ### training
-output_dir: outputs/test_fsdp2
+output_dir: ./outputs/test_lora
 micro_batch_size: 1
-global_batch_size: 1
+global_batch_size: 4
 cutoff_len: 2048
 learning_rate: 1.0e-4
-bf16: false
+bf16: true
 max_steps: 10
 
 ### sample
