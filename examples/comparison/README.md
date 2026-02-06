@@ -1,9 +1,11 @@
-# Fine-Tuning Comparison Feature
-
+# Fine-Tuning Comparison Feature 
 The purpose of this update is to allow people to easily compare fine-tuning strategies given a specific fine-tuning configuration.
 This new feature extends the existing system and is meant to work with pre-defined datasets, algorithms, and metrics.
 
 To compare training metrics, you need to have already defined .yaml configuration files that include the LLM, the dataset, and the fine-tuning strategy. For examples of such configurations, see /examples.
+
+## EXPERIMENTAL FEATURE
+⚠️ This model evaluation feature has undergone limited testing. Default settings run a very small number of samples for quick tests. Increasing sample size or batch size may increase memory usage or runtime. ⚠️
 
 ---
 
