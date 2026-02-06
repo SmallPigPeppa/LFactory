@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-"""
-Methods for comparing two existing .yaml training configurations.
+"""Methods for comparing two existing .yaml training configurations.
 
 The following methods have been defined:
 1) Sequentially run two .yaml trainings via llamafactory-cli (with error handling)
@@ -12,19 +11,18 @@ The following methods have been defined:
 #------------------------------IMPORTS---------------------------------#
 import os
 import subprocess
-import yaml
 import tempfile
 import traceback
-from typing import Dict
 
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 import torch
+import yaml
+
 
 #-----------------------------FUNCTIONS---------------------------------#
 def run_yaml_training(yaml_path: str) -> str:
-    """
-    Runs a training .yaml via llamafactory-cli and returns the path to the resulting checkpoint.
+    """Runs a training .yaml via llamafactory-cli and returns the path to the resulting checkpoint.
 
     Requires:
      the path to the .yaml configuration file for training.
@@ -32,7 +30,7 @@ def run_yaml_training(yaml_path: str) -> str:
     Returns:
      the path to the resulting checkpoint (pytorch_model.pt) if training succeeds, or a dummy path otherwise.
     """
-    # 
+    #
     print(f"[INFO] Running training for {yaml_path} ...") # log progress
     result = subprocess.run(["llamafactory-cli", "train", yaml_path],
         capture_output=True, # set to False to see real-time logs
@@ -47,7 +45,7 @@ def run_yaml_training(yaml_path: str) -> str:
 
     # Load .yaml into a dict to determine output directory
     try:
-        with open(yaml_path, "r", encoding="utf-8") as f:
+        with open(yaml_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         outdir = cfg.get(
             "output_dir",
@@ -61,22 +59,22 @@ def run_yaml_training(yaml_path: str) -> str:
 
 
 def merge_lora_checkpoint(checkpoint_dir: str, yaml_path: str) -> str:
-    """
-    Attempts to merge LoRA weights into the base model, to be able to accurately evaluate the performance of each fine-tuning method.
+    """Attempts to merge LoRA weights into the base model, to be able to accurately evaluate the performance of each fine-tuning method.
     Upon success the method returns the directory with the merged model. 
         Otherwise, a warning is logged and the method returns the original checkpoint. Dummy data will be returned instead.
 
     Requires:
       the path to the training checkpoint directory and the .yaml configuration.
+
     Returns:
       either the path to the merged model (upon success) or the original checkpoint (otherwise).
     """
     try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
         from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         # Load the .yaml config into a dictionary
-        with open(yaml_path, "r", encoding="utf-8") as f:
+        with open(yaml_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
 
         # Extract the base model name from the config, or raise an error if it could not be found
@@ -84,7 +82,7 @@ def merge_lora_checkpoint(checkpoint_dir: str, yaml_path: str) -> str:
         if not base_name:
             raise RuntimeError("Base model name not found in yaml; cannot merge with PEFT")
 
-        # Attempt to merge LoRA weights using GPU if available, else CPU 
+        # Attempt to merge LoRA weights using GPU if available, else CPU
         print(f"[INFO] Attempting to merge LoRA adapter from {checkpoint_dir} into {base_name} ...")
         tokenizer = AutoTokenizer.from_pretrained(base_name, use_fast=False) # use_fast=False to avoid potential compatibility issues
         try:
@@ -109,12 +107,11 @@ def merge_lora_checkpoint(checkpoint_dir: str, yaml_path: str) -> str:
         # Fallback to checkpoint directory without merging
         print(f"[WARN] Could not merge LoRA (probably insufficient memory): {e}")
         print("[INFO] Falling back to using dummy/simulated metrics instead.")
-        return checkpoint_dir 
+        return checkpoint_dir
 
 
-def evaluate_checkpoint(checkpoint_path: str, eval_config: dict) -> Dict[str, float]:
-    """
-    Loads a passed checkpoint and computes four metrics: 
+def evaluate_checkpoint(checkpoint_path: str, eval_config: dict) -> dict[str, float]:
+    """Loads a passed checkpoint and computes four metrics:
         - eval_loss: the evaluation loss on the specified eval dataset, 
         - perplexity: the perplexity on the eval dataset, 
         - latency_ms: the average latency (ms) per inference step,
@@ -132,11 +129,12 @@ def evaluate_checkpoint(checkpoint_path: str, eval_config: dict) -> Dict[str, fl
         # If real evaluation is requested, evaluate the performance via LLaMA Factory's Evaluator
         if eval_config.get("use_real_eval", False):
             import uuid
+
             from llamafactory.eval.evaluator import Evaluator
 
             # Ensure the checkpoint path is a directory
             ckpt_dir = checkpoint_path if os.path.isdir(checkpoint_path) else os.path.dirname(checkpoint_path)
-            
+
             # Generate temporary directory for the evaluation metrics (to avoid writing conflicts)
             eval_save_dir = os.path.join(tempfile.gettempdir(), f"llama_eval_{uuid.uuid4().hex[:8]}")
 
@@ -158,7 +156,7 @@ def evaluate_checkpoint(checkpoint_path: str, eval_config: dict) -> Dict[str, fl
             results_path = os.path.join(eval_save_dir, "results.json")
             if os.path.exists(results_path):
                 import json
-                with open(results_path, "r", encoding="utf-8") as f:
+                with open(results_path, encoding="utf-8") as f:
                     results = json.load(f)
                 return results
     except Exception as e:
@@ -175,8 +173,7 @@ def evaluate_checkpoint(checkpoint_path: str, eval_config: dict) -> Dict[str, fl
 
 
 def compare_two_yamls(yaml_1: str, yaml_2: str, output_dir: str) -> pd.DataFrame:
-    """
-    Orchestration function for running the comparison of 2 fine-tuning methods defined by their .yaml configurations.
+    """Orchestration function for running the comparison of 2 fine-tuning methods defined by their .yaml configurations.
     The function performs the following steps:
     1) Sequentially run 2 .yaml trainings via llamafactory-cli
     2) Merge LoRA weights if applicable

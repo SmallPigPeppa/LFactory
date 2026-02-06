@@ -1,16 +1,16 @@
 #!/usr/bin/env python
-"""
-Mapping of the CLI command to compare 2 LLaMA-Factory .yaml files, to the actual function.
+"""Mapping of the CLI command to compare 2 LLaMA-Factory .yaml files, to the actual function.
 """
 
 #------------------------------IMPORTS---------------------------------#
 import argparse
+
 from yaml_compare import compare_two_yamls
+
 
 #-----------------------------FUNCTIONS---------------------------------#
 def parse_args():
-    """
-    CLI flag definition: 
+    """CLI flag definition:
     --first: path to the first model to fine-tune
     --second: path to the second model to fine-tune
     --out: output directory for evaluation metricsa and plots (default: data/ft_comparison_results)
@@ -22,8 +22,7 @@ def parse_args():
     return p.parse_args()
 
 def main():
-    """
-    Pass the arguments extracted from the CLI to the comparison function.
+    """Pass the arguments extracted from the CLI to the comparison function.
     """
     args = parse_args()
     compare_two_yamls(args.first, args.second, args.out)

@@ -1,12 +1,14 @@
+import os
+import sys
 import unittest
 from unittest.mock import patch
+
 import pandas as pd
 
-import sys
-import os
 
 sys.path.insert(0, os.path.abspath("scripts/finetuning_comparison"))
 from yaml_compare import compare_two_yamls
+
 
 class TestYamlCompare(unittest.TestCase):
     """"
@@ -29,7 +31,7 @@ class TestYamlCompare(unittest.TestCase):
         self.assertIsInstance(df, pd.DataFrame) # check output type (should be a DataFrame)
         self.assertEqual(len(df), 2) # check there are results for both models
         # Check that all metrics are logged
-        self.assertIn("eval_loss", df.columns) 
+        self.assertIn("eval_loss", df.columns)
         self.assertIn("perplexity", df.columns)
         self.assertIn("latency_ms", df.columns)
         self.assertIn("peak_vram_mb", df.columns)
