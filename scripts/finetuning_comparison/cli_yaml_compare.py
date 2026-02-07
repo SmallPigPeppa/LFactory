@@ -13,7 +13,7 @@ def parse_args():
     """CLI flag definition:
     --first: path to the first model to fine-tune
     --second: path to the second model to fine-tune
-    --out: output directory for evaluation metricsa and plots (default: data/ft_comparison_results)
+    --out: output directory for evaluation metrics and plots (default: data/ft_comparison_results)
     """
     p = argparse.ArgumentParser(description="Compare two YAML trainings.")
     p.add_argument("--first", required=True, help="Path to first YAML")
