@@ -227,5 +227,8 @@ def compare_two_yamls(yaml_1: str, yaml_2: str, output_dir: str) -> pd.DataFrame
 
     # Display the plot and return the DataFrame
     plt.tight_layout()
-    plt.show()
+    plot_path = os.path.join(output_dir, "comparison.png")
+    plt.savefig(plot_path)
+    print(f"[INFO] Plot saved to {plot_path}")
+    plt.close(fig)
     return df
