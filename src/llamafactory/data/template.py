@@ -465,7 +465,10 @@ class Glm47ReasoningTemplate(ReasoningTemplate):
 
     @override
     def add_thought(self, content: str = "") -> str:
-        return self.thought_words[1] + content
+        if not content:
+            return self.thought_words[1]
+
+        return self.thought_words[0] + content + self.thought_words[1]
 
 
 TEMPLATES: dict[str, "Template"] = {}
