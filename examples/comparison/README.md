@@ -61,7 +61,7 @@ Open `ft_comparison_demo.py` and adjust the following paths:
 Save and run the script:
 
 ```bash
-python examples/ft_comparison_demo.py
+python examples/comparison/ft_comparison_demo.py
 ```
 
 ### Option 2: Using the CLI
