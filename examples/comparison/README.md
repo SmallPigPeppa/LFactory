@@ -41,7 +41,7 @@ pip install https://github.com/jllllll/bitsandbytes-windows-webui/releases/downl
 
 ## Structure
 
-- **Demo:** `/examples/ft_comparison_demo.py`  
+- **Demo:** `/examples/comparison/ft_comparison_demo.py`  
   Runs sequential fine-tuning algorithms (LoRA and QLoRA) and saves 4 metrics at each checkpoint.
 
 - **Core logic:** `/scripts/finetuning_comparison`  
