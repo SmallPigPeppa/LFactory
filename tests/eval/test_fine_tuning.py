@@ -11,7 +11,7 @@ from yaml_compare import compare_two_yamls
 
 
 class TestYamlCompare(unittest.TestCase):
-    """"
+    """
     Test the fallback functionality for comparing two YAML configs when real training/eval is not possible.
     """
     @patch("yaml_compare.run_yaml_training")
