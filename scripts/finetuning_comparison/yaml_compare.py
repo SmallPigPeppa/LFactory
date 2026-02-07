@@ -206,7 +206,7 @@ def compare_two_yamls(yaml_1: str, yaml_2: str, output_dir: str) -> pd.DataFrame
         })
         results.append({"method": os.path.basename(yaml_file), **metrics}) # metrics to be appended as a dictionary
 
-    # Create a DataFrame to ve exported to .csv
+    # Create a DataFrame to be exported to .csv
     df = pd.DataFrame(results)
     csv_path = os.path.join(output_dir, "comparison.csv")
     df.to_csv(csv_path, index=False)
