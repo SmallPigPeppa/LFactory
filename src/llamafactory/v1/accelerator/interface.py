@@ -28,7 +28,7 @@ And data parallelism types:
 
 from dataclasses import dataclass
 from datetime import timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Optional
 
 from torch.distributed import barrier, destroy_process_group, init_process_group
@@ -42,7 +42,7 @@ from . import helper
 logger = logging.get_logger(__name__)
 
 
-class Dim(str, Enum):
+class Dim(StrEnum):
     """Dimension names."""
 
     MP_REPLICATE = "mp_replicate"
@@ -145,7 +145,7 @@ class DistributedInterface:
             timeout = config.get("timeout", 18000)
 
         if self._is_distributed:
-            init_process_group(timeout=timedelta(seconds=timeout))
+            init_process_group(timeout=timedelta(seconds=timeout), backend=helper.get_process_group_backend())
             self.model_device_mesh = init_device_mesh(
                 device_type=self.current_device.type,
                 mesh_shape=self.strategy.model_mesh_shape,
