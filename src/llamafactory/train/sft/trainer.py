@@ -52,6 +52,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         processor: Optional["ProcessorMixin"],
         model_args: Optional["ModelArguments"] = None,
         gen_kwargs: Optional[dict[str, Any]] = None,
+        ref_model: Optional["torch.nn.Module"] = None,
         **kwargs,
     ) -> None:
         kwargs["processing_class"] = kwargs.pop("tokenizer")
@@ -82,6 +83,16 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             self.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, self.accelerator)
             self.add_callback(BAdamCallback)
 
+        self.ref_model = ref_model
+        if ref_model is not None:
+            ref_model.requires_grad_(False)
+            if self.is_deepspeed_enabled:
+                device = getattr(self.accelerator, "device", torch.device("cuda", 0))
+                self.ref_model = self.ref_model.to(device)
+            else:
+                self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
+            self.ref_model.eval()
+
         if finetuning_args.use_dft_loss:
             from ..trainer_utils import dft_loss_func
 
@@ -92,6 +103,15 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
             self.compute_loss_func = lambda outputs, labels, num_items_in_batch=None: eaft_loss_func(
                 outputs, labels, num_items_in_batch, finetuning_args.eaft_alpha
+            )
+        elif finetuning_args.use_asft_loss:
+            from ..trainer_utils import asft_loss_func
+
+            self.compute_loss_func = lambda outputs, labels, ref_logits: asft_loss_func(
+                outputs,
+                labels,
+                ref_logits,
+                finetuning_args.asft_alpha,
             )
 
         if training_args.fp8 and hasattr(self, "accelerator"):  # verify FP8 status after trainer initialization
@@ -119,7 +139,17 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
     @override
     def compute_loss(self, model, inputs, *args, **kwargs):
-        return super().compute_loss(model, inputs, *args, **kwargs)
+        if self.finetuning_args.use_asft_loss:
+            with torch.no_grad():
+                ref_outputs = self.ref_model(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs.get("attention_mask", None),
+                )
+                ref_logits = ref_outputs.logits
+            outputs = model(**inputs)
+            return self.compute_loss_func(outputs, inputs["labels"], ref_logits)
+        else:
+            return super().compute_loss(model, inputs, *args, **kwargs)
 
     @override
     def prediction_step(
