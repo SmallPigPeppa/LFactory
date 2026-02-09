@@ -17,6 +17,7 @@
 
 import json
 import os
+from functools import partial
 from types import MethodType
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -84,14 +85,6 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             self.add_callback(BAdamCallback)
 
         self.ref_model = ref_model
-        if ref_model is not None:
-            ref_model.requires_grad_(False)
-            if self.is_deepspeed_enabled:
-                device = getattr(self.accelerator, "device", torch.device("cuda", 0))
-                self.ref_model = self.ref_model.to(device)
-            else:
-                self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
-            self.ref_model.eval()
 
         if finetuning_args.use_dft_loss:
             from ..trainer_utils import dft_loss_func
@@ -107,11 +100,9 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         elif finetuning_args.use_asft_loss:
             from ..trainer_utils import asft_loss_func
 
-            self.compute_loss_func = lambda outputs, labels, ref_logits: asft_loss_func(
-                outputs,
-                labels,
-                ref_logits,
-                finetuning_args.asft_alpha,
+            self.compute_loss_func = partial(
+                asft_loss_func,
+                asft_alpha=finetuning_args.asft_alpha,
             )
 
         if training_args.fp8 and hasattr(self, "accelerator"):  # verify FP8 status after trainer initialization

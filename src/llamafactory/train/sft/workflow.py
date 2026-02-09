@@ -15,11 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from typing import TYPE_CHECKING, Optional
-
-import torch
-from transformers import AutoModelForCausalLM
 
 from ...data import SFTDataCollatorWith4DAttentionMask, get_dataset, get_template_and_fix_tokenizer
 from ...extras.constants import IGNORE_INDEX
@@ -28,7 +24,7 @@ from ...extras.misc import calculate_tps
 from ...extras.packages import is_transformers_version_greater_than
 from ...extras.ploting import plot_loss
 from ...model import load_model, load_tokenizer
-from ..trainer_utils import create_modelcard_and_push
+from ..trainer_utils import create_modelcard_and_push, create_ref_model
 from .metric import ComputeAccuracy, ComputeSimilarity, eval_logit_processor
 from .trainer import CustomSeq2SeqTrainer
 
@@ -58,16 +54,8 @@ def run_sft(
 
     ref_model = None
     if finetuning_args.use_asft_loss:
-        logger.info_rank0("Loading teacher model for `ASFT` loss.")
-        ref_dtype = torch.bfloat16 if training_args.bf16 else torch.float16 if training_args.fp16 else torch.float32
-        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        ref_model = create_ref_model(model_args, finetuning_args)
 
-        ref_model = AutoModelForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            torch_dtype=ref_dtype,
-            trust_remote_code=model_args.trust_remote_code,
-        ).to(torch.device("cuda", local_rank))
-        ref_model.eval()
     if getattr(model, "is_quantized", False) and not training_args.do_train:
         setattr(model, "_hf_peft_config_loaded", True)  # hack here: make model compatible with prediction
 
