@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import shutil
 import pytest
-import torch
 from peft import LoraConfig, PeftModel, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from llamafactory.v1.plugins.model_plugins import peft as peft_module
 from llamafactory.v1.plugins.model_plugins.peft import merge_and_export_model
-from llamafactory.v1.config.arg_parser import get_args
+
 
 TINY_MODEL = "llamafactory/tiny-random-qwen3"
 
@@ -32,16 +30,16 @@ def model_path():
 
 @pytest.fixture(scope="function")
 def model(model_path):
-    return AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
+    return AutoModelForCausalLM.from_pretrained(model_path)
 
 
 @pytest.fixture(scope="function")
 def tokenizer(model_path):
-    return AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    return AutoTokenizer.from_pretrained(model_path)
 
 
 @pytest.fixture(scope="function")
-def adapter_path(tmp_path, model):
+def adapter_path(tmp_path):
     # Create a dummy adapter
     lora_config = LoraConfig(
         r=8,
@@ -52,7 +50,7 @@ def adapter_path(tmp_path, model):
         task_type="CAUSAL_LM",
     )
 
-    base_model = AutoModelForCausalLM.from_pretrained(TINY_MODEL, trust_remote_code=True)
+    base_model = AutoModelForCausalLM.from_pretrained(TINY_MODEL)
     peft_model = get_peft_model(base_model, lora_config)
     save_path = tmp_path / "test_adapter"
     peft_model.save_pretrained(save_path)
@@ -79,15 +77,15 @@ def test_get_freeze_model_layers(model):
     """Verify layer-wise freezing: only the last layer stays trainable."""
     # Freeze all but last layer
     config = {"name": "freeze", "freeze_trainable_layers": 1, "freeze_trainable_modules": "all"}
-    
+
     # Ensure we start with something known
     model = peft_module.get_freeze_model(model, config, is_train=True)
-    
+
     num_layers = model.config.num_hidden_layers
     assert num_layers > 0
-    
+
     for name, param in model.named_parameters():
-        if f"layers.{num_layers-1}" in name:
+        if f"layers.{num_layers - 1}" in name:
             assert param.requires_grad, f"{name} should be trainable"
         elif "layers.0" in name and num_layers > 1:
             assert not param.requires_grad, f"{name} should be frozen"
@@ -98,11 +96,11 @@ def test_get_freeze_model_modules(model):
     # Freeze specific modules (e.g. only self_attn)
     config = {"name": "freeze", "freeze_trainable_layers": 1, "freeze_trainable_modules": "self_attn"}
     model = peft_module.get_freeze_model(model, config, is_train=True)
-    
+
     num_layers = model.config.num_hidden_layers
-    
+
     for name, param in model.named_parameters():
-        if f"layers.{num_layers-1}" in name and "self_attn" in name:
+        if f"layers.{num_layers - 1}" in name and "self_attn" in name:
             assert param.requires_grad, f"{name} should be trainable"
         else:
             assert not param.requires_grad, f"{name} should be frozen"
@@ -138,7 +136,7 @@ def test_load_adapter_infer_multiple_merges(model, adapter_path):
 def test_merge_and_export_model(tmp_path, adapter_path):
     """Verify merge_and_export_model produces export artifacts."""
     export_dir = tmp_path / "export"
-    
+
     args_dict = {
         "model": TINY_MODEL,
         "peft_config": {
@@ -146,12 +144,12 @@ def test_merge_and_export_model(tmp_path, adapter_path):
             "adapter_name_or_path": adapter_path,
             "export_dir": str(export_dir),
             "export_size": 1,
-            "infer_dtype": "float16"
-        }
+            "infer_dtype": "float16",
+        },
     }
-    
+
     merge_and_export_model(args_dict)
-    
+
     assert export_dir.exists()
     assert (export_dir / "config.json").exists()
     assert (export_dir / "model.safetensors").exists()
