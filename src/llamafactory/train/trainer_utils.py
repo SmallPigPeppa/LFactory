@@ -686,7 +686,7 @@ def asft_loss_func(
     outputs,
     labels: torch.Tensor,
     ref_logits: torch.Tensor,
-    alpha: float = 0.1,
+    asft_alpha: float = 0.1,
     ignore_index: int = -100,
 ) -> torch.Tensor:
     logits = outputs.get("logits")
@@ -711,7 +711,7 @@ def asft_loss_func(
         policy_logits=shift_logits,
         policy_labels=shift_labels,
         ref_logits=shift_ref_logits,
-        alpha=alpha,
+        asft_alpha=asft_alpha,
         ignore_index=ignore_index,
     )
 
@@ -720,7 +720,7 @@ def _asft_cross_entropy(
     policy_logits: torch.Tensor,
     policy_labels: torch.Tensor,
     ref_logits: torch.Tensor,
-    alpha: float = 0.1,
+    asft_alpha: float = 0.1,
     ignore_index: int = -100,
 ) -> torch.Tensor:
     dft_loss = _dft_cross_entropy(
@@ -736,7 +736,7 @@ def _asft_cross_entropy(
         ignore_index=ignore_index,
     )
 
-    return dft_loss + alpha * kl_loss
+    return dft_loss + asft_alpha * kl_loss
 
 
 def _kl_divergence(

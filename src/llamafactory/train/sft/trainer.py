@@ -86,6 +86,25 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
 
         self.ref_model = ref_model
 
+        if ref_model is not None:
+            from trl.models.utils import prepare_deepspeed, prepare_fsdp
+
+            if getattr(self.accelerator.state, "deepspeed_plugin", None) is not None:
+                if not (
+                    getattr(ref_model, "is_loaded_in_8bit", False) or getattr(ref_model, "is_loaded_in_4bit", False)
+                ):  # quantized models are already set on the correct device
+                    self.ref_model = prepare_deepspeed(self.ref_model, self.accelerator)
+            elif getattr(self.accelerator.state, "fsdp_plugin", None) is not None:
+                if self.accelerator.is_fsdp2:
+                    from accelerate.utils.fsdp_utils import fsdp2_prepare_model
+
+                    self.ref_model = fsdp2_prepare_model(self.accelerator, self.ref_model)
+                else:
+                    self.ref_model = prepare_fsdp(self.ref_model, self.accelerator)
+            else:
+                self.ref_model = self.accelerator.prepare_model(self.ref_model, evaluation_mode=True)
+                self.ref_model.eval()
+
         if finetuning_args.use_dft_loss:
             from ..trainer_utils import dft_loss_func
 
