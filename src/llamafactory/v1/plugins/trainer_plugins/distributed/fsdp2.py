@@ -17,6 +17,7 @@ import os
 
 import torch
 import torch.nn as nn
+from peft.tuners.lora import LoraLayer
 from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict, set_model_state_dict
 from torch.distributed.fsdp import (
     CPUOffloadPolicy,
@@ -24,7 +25,6 @@ from torch.distributed.fsdp import (
     fully_shard,
 )
 from transformers import PreTrainedModel
-from peft.tuners.lora import LoraLayer
 
 from ....accelerator.helper import get_current_accelerator
 from ....accelerator.interface import DistributedInterface
@@ -94,7 +94,6 @@ class FSDP2Engine:
             reduce_dtype=reduce_dtype,
             cast_forward_inputs=True,
         )
-    
 
     def is_lora_module_wrap(self, model) -> bool:
         return any(isinstance(module, LoraLayer) for module in model.modules())
@@ -115,11 +114,10 @@ class FSDP2Engine:
         else:
             logger.info(f"Applying per-layer FSDP to {layer_cls.__name__}")
             transformer_layer_cls_to_wrap = {layer_cls}
-        
+
         if self.is_lora_module_wrap(model):
             lora_modules = []
             for module in model.modules():
-
                 if len(list(module.children())) != 0:
                     continue
                 if any(param.requires_grad for param in module.parameters(recurse=False)):
@@ -134,7 +132,7 @@ class FSDP2Engine:
                     offload_policy=CPUOffloadPolicy(pin_memory=self.pin_memory) if self.offload_params else None,
                 )
 
-            logger.info(f"Applying FSDP wrap for LoRA layer separately.")
+            logger.info("Applying FSDP wrap for LoRA layer separately.")
 
         for name, module in model.named_modules():
             should_wrap = False
@@ -179,6 +177,7 @@ class FSDP2Engine:
         )
 
         return model
+
     @torch.no_grad()
     def materialize_and_load(self, model: PreTrainedModel, hf_model_path: str, dcp_path: str = None):
         if self.rank == 0:
