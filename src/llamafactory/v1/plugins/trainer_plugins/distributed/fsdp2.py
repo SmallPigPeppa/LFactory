@@ -24,17 +24,17 @@ from torch.distributed.fsdp import (
     MixedPrecisionPolicy,
     fully_shard,
 )
-from transformers import PreTrainedModel
 
 from ....accelerator.helper import get_current_accelerator
 from ....accelerator.interface import DistributedInterface
 from ....utils.logging import get_logger
+from ....utils.types import HFModel, Processor
 
 
 logger = get_logger(__name__)
 
 
-def get_transformer_layer_cls(model: PreTrainedModel) -> type[nn.Module] | None:
+def get_transformer_layer_cls(model: HFModel) -> type[nn.Module] | None:
     no_split_modules = getattr(model, "_no_split_modules", None)
     if no_split_modules:
         if isinstance(no_split_modules, (list, tuple)):
@@ -48,6 +48,20 @@ def get_transformer_layer_cls(model: PreTrainedModel) -> type[nn.Module] | None:
         return type(model.layers[0])
 
     return None
+
+
+def save_model(model: HFModel, output_dir: str, processor: Processor) -> None:
+    if DistributedInterface().get_rank() == 0:
+        logger.info("Gathering state dict for saving...")
+
+    options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+    state_dict = get_model_state_dict(model, options=options)
+
+    if DistributedInterface().get_rank() == 0:
+        model_to_save = model.module if hasattr(model, "module") else model
+        model_to_save.save_pretrained(output_dir, state_dict=state_dict, max_shard_size="4GB")
+        processor.save_pretrained(output_dir, max_shard_size="4GB")
+        logger.info(f"Model saved to {output_dir}")
 
 
 class FSDP2Engine:
@@ -98,7 +112,7 @@ class FSDP2Engine:
     def is_lora_module_wrap(self, model) -> bool:
         return any(isinstance(module, LoraLayer) for module in model.modules())
 
-    def prepare_model(self, model: PreTrainedModel) -> PreTrainedModel:
+    def prepare_model(self, model: HFModel) -> HFModel:
         if self.fsdp_mesh is None:
             logger.warning("No FSDP Mesh available, skipping FSDP wrapping.")
             return model
@@ -179,7 +193,7 @@ class FSDP2Engine:
         return model
 
     @torch.no_grad()
-    def materialize_and_load(self, model: PreTrainedModel, hf_model_path: str, dcp_path: str = None):
+    def materialize_and_load(self, model: HFModel, hf_model_path: str, dcp_path: str = None):
         if self.rank == 0:
             logger.info("Materializing sharded model params...")
 
@@ -199,7 +213,7 @@ class FSDP2Engine:
 
         return model
 
-    def shard_model(self, model: PreTrainedModel) -> PreTrainedModel:
+    def shard_model(self, model: HFModel) -> HFModel:
         if model.device.type == "meta":
             model = self.prepare_model(model)
             model = self.materialize_and_load(model, hf_model_path=model.config.name_or_path, dcp_path=self.dcp_path)
@@ -207,7 +221,7 @@ class FSDP2Engine:
             model = self.prepare_model(model)
         return model
 
-    def _load_from_dcp(self, model: PreTrainedModel, dcp_path: str):
+    def _load_from_dcp(self, model: HFModel, dcp_path: str):
         import torch.distributed.checkpoint as dcp
 
         try:
@@ -226,7 +240,7 @@ class FSDP2Engine:
             logger.error(f"Failed to load from DCP: {e}")
             raise e
 
-    def _load_weights_from_hf_checkpoint(self, model, hf_model_path):
+    def _load_weights_from_hf_checkpoint(self, model: HFModel, hf_model_path: str):
         import glob
         import json
 
