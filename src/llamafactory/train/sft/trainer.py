@@ -122,6 +122,13 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         return super().compute_loss(model, inputs, *args, **kwargs)
 
     @override
+    def training_step(self, model, inputs, num_items_in_batch=None) -> "torch.Tensor":
+        loss = super().training_step(model, inputs, num_items_in_batch)
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        return loss
+
+    @override
     def prediction_step(
         self,
         model: "torch.nn.Module",
@@ -145,6 +152,9 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         if generated_tokens is not None and self.args.predict_with_generate:
             generated_tokens[:, : inputs["input_ids"].size(-1)] = self.processing_class.pad_token_id
             generated_tokens = generated_tokens.contiguous()
+
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
 
         return loss, generated_tokens, labels
 
