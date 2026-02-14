@@ -271,7 +271,7 @@ class BaseTrainer:
                     if os.path.exists(checkpoint_to_delete):
                         import shutil
 
-                        checkpoint_to_delete.startswith(os.path.join(self.args.output_dir, "checkpoint"))
+                        assert checkpoint_to_delete.startswith(os.path.join(self.args.output_dir, "checkpoint"))
 
                         logger.info_rank0(f"Deleting old checkpoint: {checkpoint_to_delete}")
                         shutil.rmtree(checkpoint_to_delete)
