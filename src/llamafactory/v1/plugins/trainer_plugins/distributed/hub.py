@@ -43,6 +43,13 @@ def save_model_fsdp2(model: HFModel, output_dir: str, processor: Processor) -> N
     return save_model(model, output_dir, processor)
 
 
+@DistributedPlugin("fsdp2").register("save_checkpoint")
+def save_checkpoint_fsdp2(model: HFModel, output_dir: str, processor: Processor) -> None:
+    from .fsdp2 import save_checkpoint
+
+    return save_checkpoint(model, output_dir, processor)
+
+
 @DistributedPlugin("deepspeed").register()
 def shard_model_deepspeed(model: HFModel, dist_config: PluginConfig, **kwargs) -> HFModel:
     from .deepspeed import DeepSpeedEngine
@@ -59,3 +66,10 @@ def save_model_deepspeed(model: HFModel, output_dir: str, processor: Processor) 
     from .deepspeed import save_model
 
     return save_model(model, output_dir, processor)
+
+
+@DistributedPlugin("deepspeed").register("save_checkpoint")
+def save_checkpoint_deepspeed(model: HFModel, output_dir: str, processor: Processor) -> None:
+    from .deepspeed import save_checkpoint
+
+    return save_checkpoint(model, output_dir, processor)

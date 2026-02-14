@@ -27,6 +27,7 @@ Train Phase:
 
 """
 
+import os
 from abc import abstractmethod
 
 import torch
@@ -61,6 +62,9 @@ class BaseTrainer:
         # info
         self.global_step = 0
 
+        # checkpoint management
+        self._checkpoint_folders = []  # Track saved checkpoints for cleanup
+
         # cached variables
         self.device = DistributedInterface().current_device
         self.dp_size = DistributedInterface().get_world_size(Dim.DP)
@@ -77,6 +81,7 @@ class BaseTrainer:
             self.model.gradient_checkpointing_enable({"use_reentrant": False})
 
         self._accelerate_engine = None
+        self._deepspeed_engine = None
         dist_name = self.args.dist_config.name if self.args.dist_config is not None else None
 
         if dist_name == "deepspeed":
@@ -98,6 +103,14 @@ class BaseTrainer:
             self._shard_model()
             self._init_optimizer()
             self._init_lr_scheduler()
+
+            # Log whether model was loaded from DCP
+            if dist_name == "fsdp2" and hasattr(self.model, "_fsdp2_loaded_from_dcp"):
+                loaded_from_dcp = self.model._fsdp2_loaded_from_dcp  # type: ignore[attr-defined]
+                if loaded_from_dcp:
+                    logger.info_rank0("Model loaded from DCP checkpoint, will save checkpoints in DCP format.")
+                else:
+                    logger.info_rank0("Model loaded from HF checkpoint, will save checkpoints in HF format.")
 
     def _create_batch_generator(self) -> None:
         self.train_batch_generator = BatchGenerator(
@@ -219,6 +232,79 @@ class BaseTrainer:
                 if self.global_step >= self.num_training_steps:
                     logger.info_rank0(f"Reached max_steps ({self.num_training_steps}), stopping training.")
                     return
+
+                # Save checkpoint if save_steps is set
+                if self.args.save_steps is not None and self.global_step % self.args.save_steps == 0:
+                    self._save_checkpoint_with_cleanup(checkpoint_type="step")
+
+            # Save checkpoint at the end of each epoch if save_epochs is set
+            # Note: epoch is 0-indexed, so we save at epoch+1
+            if self.args.save_epochs is not None and (epoch + 1) % self.args.save_epochs == 0:
+                self._save_checkpoint_with_cleanup(checkpoint_type="epoch", epoch=epoch + 1)
+
+    def _save_checkpoint_with_cleanup(self, checkpoint_type: str = "step", epoch: int | None = None) -> None:
+        """Save checkpoint and manage checkpoint rotation based on save_total_limit.
+
+        Args:
+            checkpoint_type: Type of checkpoint - "step" or "epoch"
+            epoch: Epoch number (only used when checkpoint_type="epoch")
+        """
+        if checkpoint_type == "epoch" and epoch is not None:
+            checkpoint_dir = os.path.join(self.args.output_dir, f"checkpoint-epoch-{epoch}")
+            logger.info_rank0(f"Saving checkpoint at epoch {epoch} (step {self.global_step}) to {checkpoint_dir}")
+        else:
+            checkpoint_dir = os.path.join(self.args.output_dir, f"checkpoint-{self.global_step}")
+            logger.info_rank0(f"Saving checkpoint at step {self.global_step} to {checkpoint_dir}")
+
+        self.save_checkpoint(output_dir=checkpoint_dir)
+
+        # Track this checkpoint
+        self._checkpoint_folders.append(checkpoint_dir)
+
+        # Clean up old checkpoints if save_total_limit is set
+        if self.args.save_total_limit is not None and len(self._checkpoint_folders) > self.args.save_total_limit:
+            # Only delete on rank 0 to avoid race conditions
+            if DistributedInterface().get_rank() == 0:
+                num_to_delete = len(self._checkpoint_folders) - self.args.save_total_limit
+                for _ in range(num_to_delete):
+                    checkpoint_to_delete = self._checkpoint_folders.pop(0)
+                    if os.path.exists(checkpoint_to_delete):
+                        import shutil
+
+                        checkpoint_to_delete.startswith(os.path.join(self.args.output_dir, "checkpoint"))
+
+                        logger.info_rank0(f"Deleting old checkpoint: {checkpoint_to_delete}")
+                        shutil.rmtree(checkpoint_to_delete)
+            else:
+                # Non-rank-0 processes just update the list
+                num_to_delete = len(self._checkpoint_folders) - self.args.save_total_limit
+                for _ in range(num_to_delete):
+                    self._checkpoint_folders.pop(0)
+
+            # Sync to make sure deletion is complete before continuing
+            DistributedInterface().sync()
+
+    def save_checkpoint(self, output_dir: str | None = None) -> None:
+        """Save checkpoint during training.
+
+        Args:
+            output_dir: Output directory. If None, uses self.args.output_dir
+        """
+        if output_dir is None:
+            output_dir = self.args.output_dir
+
+        if self.args.dist_config is not None and self.args.dist_config.name in ("deepspeed", "fsdp2"):
+            from ..plugins.trainer_plugins.distributed.hub import DistributedPlugin
+
+            DistributedPlugin(self.args.dist_config.name).save_checkpoint(
+                self.model, output_dir, self.renderer.processor
+            )
+        else:
+            # For DDP or single GPU, just save the model normally
+            model_to_save = self.model.module if hasattr(self.model, "module") else self.model
+            model_to_save.save_pretrained(output_dir, max_shard_size="4GB")
+            self.renderer.processor.save_pretrained(output_dir, max_shard_size="4GB")
+            logger.info_rank0(f"Checkpoint saved to {output_dir}")
 
     def save_model(self) -> None:
         """Save the model."""

@@ -109,6 +109,29 @@ class DeepSpeedEngine:
         return 0.0
 
 
+def save_checkpoint(model: HFModel, output_dir: str, processor: Processor) -> None:
+    """Save checkpoint during training using DeepSpeed's native format.
+
+    Note: DeepSpeed does not support DCP format.
+
+    Args:
+        model: The model to save
+        output_dir: Output directory
+        processor: Processor to save
+    """
+    accelerator: Accelerator = model._accelerator
+
+    unwrapped_model = accelerator.unwrap_model(model)
+    state_dict = accelerator.get_state_dict(model)
+
+    if accelerator.is_main_process:
+        unwrapped_model.save_pretrained(output_dir, state_dict=state_dict, max_shard_size="4GB")
+        processor.save_pretrained(output_dir, max_shard_size="4GB")
+
+    accelerator.wait_for_everyone()
+    logger.info_rank0(f"Checkpoint saved to {output_dir}")
+
+
 def save_model(model: HFModel, output_dir: str, processor: Processor) -> None:
     """Save model using accelerate's built-in ZeRO-aware utilities.
 
@@ -116,7 +139,7 @@ def save_model(model: HFModel, output_dir: str, processor: Processor) -> None:
     Handles ZeRO-3 parameter gathering automatically via
     accelerator.get_state_dict().
     """
-    accelerator: Accelerator = model._accelerator  # type: ignore[union-attr]
+    accelerator: Accelerator = model._accelerator
 
     unwrapped_model = accelerator.unwrap_model(model)
     state_dict = accelerator.get_state_dict(model)

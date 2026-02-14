@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import gc
 import os
-import copy
 
 import torch
 import torch.nn as nn
@@ -49,6 +49,51 @@ def get_transformer_layer_cls(model: HFModel) -> type[nn.Module] | None:
         return type(model.layers[0])
 
     return None
+
+
+def save_checkpoint(model: HFModel, output_dir: str, processor: Processor) -> None:
+    """Save checkpoint during training.
+
+    Automatically detects the format based on how the model was loaded:
+    - If loaded from DCP, saves in DCP format
+    - If loaded from HF, saves in HF format
+
+    Args:
+        model: The model to save
+        output_dir: Output directory
+        processor: Processor to save
+    """
+    import torch.distributed.checkpoint as dcp
+
+    # Auto-detect whether to use DCP based on how the model was loaded
+    use_dcp = getattr(model, "_fsdp2_loaded_from_dcp", False)
+
+    if use_dcp:
+        if DistributedInterface().get_rank() == 0:
+            logger.info(f"Saving checkpoint as DCP format to {output_dir} ...")
+            os.makedirs(output_dir, exist_ok=True)
+
+        checkpoint_dir = os.path.join(output_dir, "checkpoint")
+
+        options = StateDictOptions(full_state_dict=False, cpu_offload=True)
+        local_state_dict = get_model_state_dict(model, options=options)
+        dcp.save(state_dict=local_state_dict, checkpoint_id=checkpoint_dir)
+
+        if DistributedInterface().get_rank() == 0:
+            processor.save_pretrained(output_dir, max_shard_size="4GB")
+            logger.info(f"Checkpoint saved as DCP format to {output_dir}")
+    else:
+        if DistributedInterface().get_rank() == 0:
+            logger.info("Gathering full state dict for checkpoint saving...")
+
+        options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+        state_dict = get_model_state_dict(model, options=options)
+
+        if DistributedInterface().get_rank() == 0:
+            model_to_save = model.module if hasattr(model, "module") else model
+            model_to_save.save_pretrained(output_dir, state_dict=state_dict, max_shard_size="4GB")
+            processor.save_pretrained(output_dir, max_shard_size="4GB")
+            logger.info(f"Checkpoint saved to {output_dir}")
 
 
 def save_model(model: HFModel, output_dir: str, processor: Processor) -> None:
@@ -203,19 +248,17 @@ class FSDP2Engine:
 
         if dcp_path and os.path.exists(dcp_path):
             if self.rank == 0:
-                logger.info(f"DCP path found at {dcp_path}. Using efficient Sharded Loading (DCP Load).")
+                logger.info(f"Loading from DCP checkpoint: {dcp_path}")
             self._load_from_dcp(model, dcp_path)
         else:
             if self.rank == 0:
-                if dcp_path:
-                    logger.warning(f"DCP path {dcp_path} not found.")
-                logger.info("Using HF Meta Loading (Chunk Load).")
+                logger.info(f"Loading from HF checkpoint: {hf_model_path}")
             self._load_weights_from_hf_checkpoint(model, hf_model_path)
 
         return model
 
-    def _save_non_persistent_buffers(self, model: PreTrainedModel) -> dict:
-        """save non-persistent buffers, such as inv_freq"""
+    def _save_non_persistent_buffers(self, model: HFModel) -> dict:
+        """Save non-persistent buffers, such as inv_freq."""
         saved = {}
         for mod_name, module in model.named_modules():
             for buf_name in module._non_persistent_buffers_set:
@@ -227,8 +270,8 @@ class FSDP2Engine:
             logger.info(f"Saved {len(saved)} non-persistent buffers")
         return saved
 
-    def _restore_non_persistent_buffers(self, model: PreTrainedModel, saved_buffers: dict):
-        """register saved non-persistent buffers to model."""
+    def _restore_non_persistent_buffers(self, model: HFModel, saved_buffers: dict):
+        """Register saved non-persistent buffers to model."""
         if not saved_buffers:
             return
         device = get_current_accelerator()
@@ -245,9 +288,7 @@ class FSDP2Engine:
             logger.info(f"Restored {len(saved_buffers)} non-persistent buffers")
 
     def shard_model(self, model: HFModel) -> HFModel:
-        
         if model.device.type == "meta":
-
             non_persistent_buffers = self._save_non_persistent_buffers(model)
 
             if getattr(model.config, "tie_word_embeddings", None):
@@ -255,11 +296,14 @@ class FSDP2Engine:
 
             model = self.prepare_model(model)
             model = self.materialize_and_load(model, hf_model_path=model.config.name_or_path, dcp_path=self.dcp_path)
-            
+
             self._restore_non_persistent_buffers(model, non_persistent_buffers)
 
         else:
             model = self.prepare_model(model)
+
+        # Store whether we loaded from DCP for later use in saving
+        model._fsdp2_loaded_from_dcp = self.dcp_path and os.path.exists(self.dcp_path)
         return model
 
     def _load_from_dcp(self, model: HFModel, dcp_path: str):

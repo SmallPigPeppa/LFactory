@@ -81,6 +81,18 @@ class TrainingArguments:
         default=None,
         metadata={"help": "Learning rate scheduler configuration for training."},
     )
+    save_steps: int | None = field(
+        default=None,
+        metadata={"help": "Save checkpoint every X steps. If None, checkpoints are not saved by steps."},
+    )
+    save_epochs: int | None = field(
+        default=None,
+        metadata={"help": "Save checkpoint every X epochs. If None, checkpoints are not saved by epochs."},
+    )
+    save_total_limit: int | None = field(
+        default=None,
+        metadata={"help": "Maximum number of checkpoints to keep. Older checkpoints are deleted."},
+    )
 
     def __post_init__(self) -> None:
         self.dist_config = get_plugin_config(self.dist_config)
