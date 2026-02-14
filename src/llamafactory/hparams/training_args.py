@@ -95,6 +95,11 @@ class TrainingArguments(Fp8Arguments, RayArguments, BaseTrainingArguments):
         metadata={"help": "deprecated"},
     )
 
+    empty_mps_cache: bool = field(
+        default=False,
+        metadata={"help": "Enable explicit GPU cache clearing on MPS devices to prevent memory leaks."},
+    )
+
     def __post_init__(self):
         RayArguments.__post_init__(self)
         BaseTrainingArguments.__post_init__(self)
