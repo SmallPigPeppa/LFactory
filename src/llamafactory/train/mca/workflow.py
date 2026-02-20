@@ -108,9 +108,7 @@ def _freeze_model_parameters(model: Any, finetuning_args: "FinetuningArguments")
     if params_to_freeze:
         for name, p in model.named_parameters():
             if any(name.startswith(k) for k in params_to_freeze):
-                logger.info(f"Freezing parameter: {name}") # for debug
                 p.requires_grad_(False)
-
 
 def run_pt(
     model_args: "ModelArguments",
