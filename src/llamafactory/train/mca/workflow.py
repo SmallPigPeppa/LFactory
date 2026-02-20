@@ -97,7 +97,7 @@ def _freeze_model_parameters(model: Any, finetuning_args: "FinetuningArguments")
     if finetuning_args.freeze_vision_tower:
         params_to_freeze.extend(["vision_model.blocks", "vision_model.patch_embed"])
         if getattr(model.config, "hf_model_type", None) in ["qwen3_vl", "qwen3_vl_moe"]:
-            params_to_freeze.extend(["visual.pos_embed"])
+            params_to_freeze.extend(["vision_model.pos_embed"])
 
     if finetuning_args.freeze_multi_modal_projector:
         params_to_freeze.extend(["multi_modal_projector"])
