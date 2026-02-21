@@ -246,8 +246,8 @@ class CustomDPOTrainer(DPOTrainer):
         return {
             "chosen_logps": chosen_logps,
             "rejected_logps": rejected_logps,
-            "chosen_logits": chosen_logits,
-            "rejected_logits": rejected_logits,
+            "chosen_logits": chosen_logits.detach().mean(),  # reduce to scalar to free large logit tensor
+            "rejected_logits": rejected_logits.detach().mean(),  # reduce to scalar to free large logit tensor
             "chosen_logps_avg": chosen_logps_avg,
         }
 
@@ -308,8 +308,8 @@ class CustomDPOTrainer(DPOTrainer):
         metrics[f"{prefix}rewards/margins"] = (chosen_rewards - rejected_rewards).mean().item()
         metrics[f"{prefix}logps/chosen"] = policy_chosen_logps.mean().item()
         metrics[f"{prefix}logps/rejected"] = policy_rejected_logps.mean().item()
-        metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.mean().item()
-        metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.mean().item()
+        metrics[f"{prefix}logits/chosen"] = policy_chosen_logits.item()
+        metrics[f"{prefix}logits/rejected"] = policy_rejected_logits.item()
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
             metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / self.beta).mean().item()
