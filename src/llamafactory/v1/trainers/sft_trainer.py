@@ -31,7 +31,12 @@ class SFTTrainer(BaseTrainer):
 
 def run_sft(args: InputArgument = None):
     model_args, data_args, training_args, _ = get_args(args)
-    DistributedInterface(training_args.dist_config)
+    # parallel_config (if set) takes precedence for DistributedInterface so that users can
+    # specify cp_size / dp_size independently of the dist plugin (fsdp2, deepspeed, etc.).
+    # This is particularly useful for Ascend NPU where sequence parallelism is desired
+    # without CUDA-only backends.  Falling back to dist_config preserves backward compat.
+    dist_interface_config = training_args.parallel_config or training_args.dist_config
+    DistributedInterface(dist_interface_config)
     train_dataset = DataEngine(data_args.train_dataset)
     model_engine = ModelEngine(model_args, is_train=True)
     trainer = SFTTrainer(

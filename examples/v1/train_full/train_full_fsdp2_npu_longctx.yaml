@@ -1,0 +1,52 @@
+# Long-context full fine-tuning on Ascend NPU with context parallelism (cp_size=2).
+#
+# Context parallelism splits each sequence across `cp_size` devices, halving the
+# per-device activation memory so that 32k+ sequences become feasible.
+#
+# Tested on 2-node × 8-card Ascend 910B2 (16 devices total).
+# With cp_size=2 the effective DP size is 8 (16 / 2).
+#
+# Launch command (16 NPUs, torchrun or equivalent):
+#   ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+#   torchrun --nproc_per_node=8 --nnodes=2 --node_rank=<RANK> \
+#     --master_addr=<MASTER_ADDR> --master_port=29500 \
+#     -m llamafactory.v1.trainers.sft_trainer \
+#     examples/v1/train_full/train_full_fsdp2_npu_longctx.yaml
+
+model: Qwen/Qwen3-32B
+trust_remote_code: true
+model_class: llm
+
+template: qwen3_nothink
+
+kernel_config:
+  name: auto
+  include_kernels: auto  # enables npu_fused_rope, npu_fused_rmsnorm, etc.
+
+quant_config: null
+
+# parallel_config sets cp_size for DistributedInterface independently of the
+# training plugin.  No "name" field is required here.
+# With 16 NPUs and cp_size=2: dp_size=8, each sequence is split across 2 devices.
+parallel_config:
+  cp_size: 2
+
+dist_config:
+  name: fsdp2
+  dcp_path: null
+
+init_config:
+  name: init_on_meta
+
+### data
+train_dataset: data/v1_sft_demo.yaml
+
+### training
+output_dir: outputs/qwen3-32b-full-longctx-npu
+micro_batch_size: 1
+global_batch_size: 8
+cutoff_len: 32768  # 32k context length
+learning_rate: 1.0e-5
+bf16: true
+enable_activation_checkpointing: true
+max_steps: 100

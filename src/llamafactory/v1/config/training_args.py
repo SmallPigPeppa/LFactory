@@ -16,7 +16,7 @@ import os
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from .arg_utils import BatchingStrategy, PluginConfig, get_plugin_config
+from .arg_utils import BatchingStrategy, PluginConfig, get_parallel_config, get_plugin_config
 
 
 @dataclass
@@ -69,6 +69,19 @@ class TrainingArguments:
         default=True,
         metadata={"help": "Enable activation checkpointing for training."},
     )
+    parallel_config: dict | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "Parallel strategy configuration for DistributedInterface. "
+                "Accepts a JSON dict with fields: cp_size (context parallel size), "
+                "dp_size (data parallel size), mp_shard_size, mp_replicate_size, timeout. "
+                "Unlike dist_config, no 'name' field is required. "
+                "Example: '{\"cp_size\": 2}' enables sequence parallelism across 2 devices "
+                "and is compatible with Ascend NPU and LoRA fine-tuning."
+            )
+        },
+    )
     dist_config: PluginConfig | None = field(
         default=None,
         metadata={"help": "Distribution configuration for training."},
@@ -83,6 +96,7 @@ class TrainingArguments:
     )
 
     def __post_init__(self) -> None:
+        self.parallel_config = get_parallel_config(self.parallel_config)
         self.dist_config = get_plugin_config(self.dist_config)
         self.optim_config = get_plugin_config(self.optim_config)
         self.lr_scheduler_config = get_plugin_config(self.lr_scheduler_config)

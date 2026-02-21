@@ -101,3 +101,33 @@ def get_plugin_config(config: PluginArgument) -> PluginConfig | None:
         raise ValueError("Plugin configuration must have a 'name' field.")
 
     return PluginConfig(config)
+
+
+def get_parallel_config(config: "dict | str | None") -> "dict | None":
+    """Get the parallel configuration from the argument value.
+
+    Unlike :func:`get_plugin_config`, this does not require a ``name`` field.
+    It is used to configure :class:`DistributedInterface` with parallelism
+    settings such as ``cp_size`` (context parallel) and ``dp_size`` (data
+    parallel) independently of the training plugin (FSDP2, DeepSpeed, etc.).
+
+    Example usage::
+
+        parallel_config: {"cp_size": 2}
+
+    Args:
+        config: A JSON string or dict containing :class:`DistributedConfig`
+            fields (``cp_size``, ``dp_size``, ``mp_shard_size``,
+            ``mp_replicate_size``, ``timeout``).
+
+    Returns:
+        The parsed parallel configuration dict, or ``None`` if *config* is
+        ``None``.
+    """
+    if config is None:
+        return None
+
+    if isinstance(config, str) and config.startswith("{"):
+        config = json.loads(config)
+
+    return _convert_str_dict(dict(config))
