@@ -14,6 +14,7 @@
 
 import json
 import os
+import threading
 from collections.abc import Generator
 from copy import deepcopy
 from subprocess import PIPE, Popen, TimeoutExpired
@@ -62,6 +63,8 @@ class Runner:
         self.trainer: Popen | None = None
         self.do_train = True
         self.running_data: dict[Component, Any] = None
+        self._stderr_lines: list[str] = []
+        self._stderr_thread: threading.Thread | None = None
         """ State """
         self.aborted = False
         self.running = False
@@ -376,6 +379,9 @@ class Runner:
 
             # NOTE: DO NOT USE shell=True to avoid security risk
             self.trainer = Popen(["llamafactory-cli", "train", save_cmd(args)], env=env, stderr=PIPE, text=True)
+            self._stderr_lines = []
+            self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
+            self._stderr_thread.start()
             yield from self.monitor()
 
     def _build_config_dict(self, data: dict["Component", Any]) -> dict[str, Any]:
@@ -388,6 +394,11 @@ class Runner:
                 config_dict[elem_id] = value
 
         return config_dict
+
+    def _drain_stderr(self) -> None:
+        r"""Drain stderr in background to prevent pipe buffer from filling up."""
+        for line in self.trainer.stderr:
+            self._stderr_lines.append(line)
 
     def preview_train(self, data):
         yield from self._preview(data, do_train=True)
@@ -439,8 +450,9 @@ class Runner:
                 yield return_dict
 
             try:
-                stderr = self.trainer.communicate(timeout=2)[1]
-                return_code = self.trainer.returncode
+                return_code = self.trainer.wait(timeout=2)
+                self._stderr_thread.join()
+                stderr = "".join(self._stderr_lines)
             except TimeoutExpired:
                 continue
 
