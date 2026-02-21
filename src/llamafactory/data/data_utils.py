@@ -57,7 +57,15 @@ def merge_dataset(
 
     elif data_args.mix_strategy == "concat":
         if data_args.streaming:
-            logger.warning_rank0_once("The samples between different datasets will not be mixed in streaming mode.")
+            logger.warning_rank0_once(
+                "Samples from different datasets will not be mixed in streaming mode. "
+                "Use `mix_strategy=interleave_under/interleave_over` for interleaved sampling."
+            )
+        else:
+            logger.info_rank0(
+                "Concatenating datasets. The training samples will be shuffled by the trainer by default. "
+                "Use `disable_shuffling=true` to preserve the dataset order."
+            )
 
         return concatenate_datasets(all_datasets)
 
