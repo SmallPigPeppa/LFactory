@@ -17,6 +17,8 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Union
 
+from datasets.fingerprint import Hasher
+
 from ..extras import logging
 from .data_utils import Role
 
@@ -410,10 +412,15 @@ def align_dataset(
     column_names = list(next(iter(dataset)).keys())
     kwargs = {}
     if not data_args.streaming:
+        hasher = Hasher()
+        hasher.update(dataset_attr)
+        hasher.update(data_args)
+
         kwargs = dict(
             num_proc=data_args.preprocessing_num_workers,
             load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
             desc="Converting format of dataset",
+            new_fingerprint=hasher.hexdigest(),
         )
 
     dataset_converter = get_dataset_converter(dataset_attr.formatting, dataset_attr, data_args)

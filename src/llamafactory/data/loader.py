@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal, Optional, Union
 
 import numpy as np
 from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
+from datasets.fingerprint import Hasher
 
 from ..extras import logging
 from ..extras.constants import FILEEXT2TYPE
@@ -246,10 +247,19 @@ def _get_preprocessed_dataset(
     column_names = list(next(iter(dataset)).keys())
     kwargs = {}
     if not data_args.streaming:
+        hasher = Hasher()
+        hasher.update(stage)
+        hasher.update(is_eval)
+        hasher.update(data_args)
+        hasher.update(tokenizer.name_or_path)
+        if processor is not None:
+            hasher.update(processor.__class__.__name__)
+
         kwargs = dict(
             num_proc=data_args.preprocessing_num_workers,
             load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
             desc="Running tokenizer on dataset",
+            new_fingerprint=hasher.hexdigest(),
         )
 
     dataset = dataset.map(
