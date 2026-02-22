@@ -251,6 +251,10 @@ def _get_preprocessed_dataset(
             load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
             desc="Running tokenizer on dataset",
         )
+    else:
+        kwargs = dict(
+            num_proc=data_args.preprocessing_num_workers,
+        )
 
     dataset = dataset.map(
         dataset_processor.preprocess_dataset,
