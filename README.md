@@ -955,3 +955,5 @@ This repo benefits from [PEFT](https://github.com/huggingface/peft), [TRL](https
 ## Star History
 
 ![Star History Chart](https://api.star-history.com/svg?repos=hiyouga/LLaMA-Factory&type=Date)
+
+## Contribution note: Referenced good first issue #4614 for LLM fine-tuning support.
