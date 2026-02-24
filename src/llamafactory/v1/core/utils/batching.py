@@ -25,8 +25,8 @@
 
 from collections.abc import Iterator
 from typing import Any
-import torch
 
+import torch
 from torch.utils.data import default_collate
 from torchdata.stateful_dataloader import StatefulDataLoader
 from torchdata.stateful_dataloader.sampler import StatefulDistributedSampler
