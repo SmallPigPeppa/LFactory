@@ -81,6 +81,10 @@ class TrainingArguments:
         default=None,
         metadata={"help": "Learning rate scheduler configuration for training."},
     )
+    seed: int = field(
+        default=42,
+        metadata={"help": "Random seed that will be set at the beginning of training."},
+    )
 
     def __post_init__(self) -> None:
         self.dist_config = get_plugin_config(self.dist_config)
