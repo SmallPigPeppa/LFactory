@@ -1,0 +1,5 @@
+model_name_or_path: /root/Qwen3-VL-8B
+adapter_name_or_path: saves/qwen3-vl-8b/lora/sft-local
+template: qwen3_vl_nothink
+infer_backend: huggingface  # choices: [huggingface, vllm, sglang, ktransformers]
+trust_remote_code: true
