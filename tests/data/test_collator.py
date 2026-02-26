@@ -22,6 +22,7 @@ from transformers import AutoConfig, AutoModelForImageTextToText
 from llamafactory.data import get_template_and_fix_tokenizer
 from llamafactory.data.collator import MultiModalDataCollatorForSeq2Seq, prepare_4d_attention_mask
 from llamafactory.extras.constants import IGNORE_INDEX
+from llamafactory.extras.packages import is_transformers_version_greater_than
 from llamafactory.hparams import get_infer_args
 from llamafactory.model import load_tokenizer
 
@@ -124,6 +125,9 @@ def test_multimodal_collator():
         "rope_deltas": [[0]],
         **tokenizer_module["processor"].image_processor(fake_image),
     }
+    if not is_transformers_version_greater_than("5.0.0"):
+        expected_input["rope_deltas"] = [[-8]]
+
     assert batch_input.keys() == expected_input.keys()
     for k in batch_input.keys():
         assert batch_input[k].eq(torch.tensor(expected_input[k])).all()
