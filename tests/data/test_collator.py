@@ -117,15 +117,12 @@ def test_multimodal_collator():
         "labels": [
             [0, 1, 2, 3, q, q, q, q, q, q, q, q],
         ],
-        "position_ids": [
-            [[0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]],
-            [[0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]],
-            [[0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]],
-        ],
+        "position_ids": [[[0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]]] * 3,
         "rope_deltas": [[0]],
         **tokenizer_module["processor"].image_processor(fake_image),
     }
     if not is_transformers_version_greater_than("5.0.0"):
+        expected_input["position_ids"] = [[[0, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1]]] * 3
         expected_input["rope_deltas"] = [[-8]]
 
     assert batch_input.keys() == expected_input.keys()
