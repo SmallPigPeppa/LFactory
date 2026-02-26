@@ -76,7 +76,7 @@ def test_base_collator():
 @pytest.mark.runs_on(["cpu", "mps"])
 def test_multimodal_collator():
     model_args, data_args, *_ = get_infer_args(
-        {"model_name_or_path": "Qwen/Qwen2-VL-2B-Instruct", "template": "qwen2_vl"}
+        {"model_name_or_path": "Qwen/Qwen3-VL-2B-Instruct", "template": "qwen3_vl"}
     )
     tokenizer_module = load_tokenizer(model_args)
     template = get_template_and_fix_tokenizer(tokenizer_module["tokenizer"], data_args)
@@ -117,9 +117,9 @@ def test_multimodal_collator():
             [0, 1, 2, 3, q, q, q, q, q, q, q, q],
         ],
         "position_ids": [
-            [[0, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1]],
-            [[0, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1]],
-            [[0, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1]],
+            [[0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]],
+            [[0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]],
+            [[0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]],
         ],
         "rope_deltas": [[-8]],
         **tokenizer_module["processor"].image_processor(fake_image),
