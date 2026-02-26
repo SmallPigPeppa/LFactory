@@ -3455,27 +3455,27 @@ register_model_group(
 
 register_model_group(
     models={
-        "Aeva-Flash": {
+        "Aeva-Flash-Chat": {
             DownloadSource.DEFAULT: "louzongzhi/Aeva-Flash",
             DownloadSource.MODELSCOPE: "louzongktsi/Aeva-Flash",
             DownloadSource.OPENMIND: "louzongzhi/Aeva-Flash",
         },
-        "Aeva-Air": {
+        "Aeva-Air-Chat": {
             DownloadSource.DEFAULT: "louzongzhi/Aeva-Air",
             DownloadSource.MODELSCOPE: "louzongktsi/Aeva-Air",
             DownloadSource.OPENMIND: "louzongzhi/Aeva-Air",
         },
-        "Aeva": {
+        "Aeva-Chat": {
             DownloadSource.DEFAULT: "louzongzhi/Aeva",
             DownloadSource.MODELSCOPE: "louzongktsi/Aeva",
             DownloadSource.OPENMIND: "louzongzhi/Aeva",
         },
-        "Aeva-Pro": {
+        "Aeva-Pro-Chat": {
             DownloadSource.DEFAULT: "louzongzhi/Aeva-Pro",
             DownloadSource.MODELSCOPE: "louzongktsi/Aeva-Pro",
             DownloadSource.OPENMIND: "louzongzhi/Aeva-Pro",
         },
-        "Aeva-Max": {
+        "Aeva-Max-Chat": {
             DownloadSource.DEFAULT: "louzongzhi/Aeva-Max",
             DownloadSource.MODELSCOPE: "louzongktsi/Aeva-Max",
             DownloadSource.OPENMIND: "louzongzhi/Aeva-Max",

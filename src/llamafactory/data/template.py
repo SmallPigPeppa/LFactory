@@ -2220,7 +2220,7 @@ register_template(
 )
 
 
-# copied from glm4_moe template
+# copied from glm4_7 template
 register_template(
     name="aeva",
     format_user=StringFormatter(slots=["<|user|>\n{{content}}<|assistant|>"]),
