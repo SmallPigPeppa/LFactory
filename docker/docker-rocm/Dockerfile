@@ -33,7 +33,7 @@ RUN pip config set global.index-url "${PIP_INDEX}" && \
 COPY . /app
 
 # Install LLaMA Factory (use base image's PyTorch/ROCm; do not reinstall)
-RUN pip install --no-cache-dir -e . && \
+RUN pip install --no-cache-dir -e . --pre && \
     pip install --no-cache-dir -r requirements/deepspeed.txt -r requirements/liger-kernel.txt -r requirements/bitsandbytes.txt
 
 # Rebuild flash attention
