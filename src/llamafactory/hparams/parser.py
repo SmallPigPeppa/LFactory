@@ -141,6 +141,10 @@ def _verify_trackio_args(training_args: "TrainingArguments") -> None:
     if training_args.hub_private_repo:
         logger.info("Repository will be created as private on Hugging Face Hub.")
 
+    # --- Recommend run_name for experiment clarity ---
+    if not training_args.run_name:
+        logger.warning("Consider setting --run_name for better experiment tracking clarity.")
+
 
 def _set_transformers_logging() -> None:
     if os.getenv("LLAMAFACTORY_VERBOSITY", "INFO") in ["DEBUG", "INFO"]:

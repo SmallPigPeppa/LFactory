@@ -14,7 +14,6 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import Optional
 
 from transformers import Seq2SeqTrainingArguments
 from transformers.training_args import _convert_str_dict
@@ -94,11 +93,6 @@ class TrainingArguments(Fp8Arguments, RayArguments, BaseTrainingArguments):
     overwrite_output_dir: bool = field(
         default=False,
         metadata={"help": "deprecated"},
-    )
-
-    project: Optional[str] = field(
-        default=None,
-        metadata={"help": "The name of the project for experiment tracking (e.g., wandb or trackio)."},
     )
 
     def __post_init__(self):
