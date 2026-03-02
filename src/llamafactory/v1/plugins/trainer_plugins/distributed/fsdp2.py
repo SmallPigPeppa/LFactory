@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import gc
 import os
-import copy 
 
 import torch
 import torch.nn as nn
@@ -214,7 +214,7 @@ class FSDP2Engine:
         return model
 
     def _save_non_persistent_buffers(self, model: HFModel) -> dict:
-        """save non-persistent buffers, such as inv_freq"""
+        """Save non-persistent buffers, such as inv_freq."""
         saved = {}
         for mod_name, module in model.named_modules():
             for buf_name in module._non_persistent_buffers_set:
@@ -227,7 +227,7 @@ class FSDP2Engine:
         return saved
 
     def _restore_non_persistent_buffers(self, model: HFModel, saved_buffers: dict):
-        """register saved non-persistent buffers to model."""
+        """Register saved non-persistent buffers to model."""
         if not saved_buffers:
             return
         device = get_current_accelerator()
@@ -245,14 +245,17 @@ class FSDP2Engine:
 
     def shard_model(self, model: HFModel) -> HFModel:
         if model.device.type == "meta":
-            
             non_persistent_buffers = self._save_non_persistent_buffers(model)
 
             if getattr(model.config, "tie_word_embeddings", None):
                 model.tie_weights()
-            
+
             model = self.prepare_model(model)
             model = self.materialize_and_load(model, hf_model_path=model.config.name_or_path, dcp_path=self.dcp_path)
+
+            # fix tied broken for no-fsdp-wrap case
+            if getattr(model.config, "tie_word_embeddings", None):
+                model.tie_weights()
 
             self._restore_non_persistent_buffers(model, non_persistent_buffers)
 
