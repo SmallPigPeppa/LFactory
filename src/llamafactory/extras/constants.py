@@ -2824,7 +2824,7 @@ register_model_group(
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-2B-Base",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-2B-Base",
         },
-        "Qwen3.5-2B-Base-Thinking": {
+        "Qwen3.5-2B-Thinking": {
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-2B",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-2B",
         },
@@ -2832,7 +2832,7 @@ register_model_group(
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-4B-Base",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-4B-Base",
         },
-        "Qwen3.5-4B-Base-Thinking": {
+        "Qwen3.5-4B-Thinking": {
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-4B",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-4B",
         },
