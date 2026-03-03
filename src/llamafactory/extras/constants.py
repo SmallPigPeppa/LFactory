@@ -2816,29 +2816,33 @@ register_model_group(
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-0.8B-Base",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-0.8B-Base",
         },
-        "Qwen3.5-0.8B-Thinking": {
-            DownloadSource.DEFAULT: "Qwen/Qwen3.5-0.8B",
-            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-0.8B",
-        },
         "Qwen3.5-2B-Base": {
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-2B-Base",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-2B-Base",
-        },
-        "Qwen3.5-2B-Thinking": {
-            DownloadSource.DEFAULT: "Qwen/Qwen3.5-2B",
-            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-2B",
         },
         "Qwen3.5-4B-Base": {
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-4B-Base",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-4B-Base",
         },
-        "Qwen3.5-4B-Thinking": {
-            DownloadSource.DEFAULT: "Qwen/Qwen3.5-4B",
-            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-4B",
-        },
         "Qwen3.5-9B-Base": {
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-9B-Base",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-9B-Base",
+        },
+        "Qwen3.5-35B-A3B-Base": {
+            DownloadSource.DEFAULT: "Qwen/Qwen3.5-35B-A3B-Base",
+            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-35B-A3B-Base",
+        },
+        "Qwen3.5-0.8B-Thinking": {
+            DownloadSource.DEFAULT: "Qwen/Qwen3.5-0.8B",
+            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-0.8B",
+        },
+        "Qwen3.5-2B-Thinking": {
+            DownloadSource.DEFAULT: "Qwen/Qwen3.5-2B",
+            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-2B",
+        },
+        "Qwen3.5-4B-Thinking": {
+            DownloadSource.DEFAULT: "Qwen/Qwen3.5-4B",
+            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-4B",
         },
         "Qwen3.5-9B-Thinking": {
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-9B",
@@ -2847,10 +2851,6 @@ register_model_group(
         "Qwen3.5-27B-Thinking": {
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-27B",
             DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-27B",
-        },
-        "Qwen3.5-35B-A3B-Base": {
-            DownloadSource.DEFAULT: "Qwen/Qwen3.5-35B-A3B-Base",
-            DownloadSource.MODELSCOPE: "Qwen/Qwen3.5-35B-A3B-Base",
         },
         "Qwen3.5-35B-A3B-Thinking": {
             DownloadSource.DEFAULT: "Qwen/Qwen3.5-35B-A3B",
