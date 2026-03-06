@@ -17,6 +17,7 @@ import gc
 import os
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from peft.tuners.lora import LoraLayer
 from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict, set_model_state_dict
@@ -244,7 +245,43 @@ class FSDP2Engine:
             logger.info(f"Restored {len(saved_buffers)} non-persistent buffers")
 
     def shard_model(self, model: HFModel) -> HFModel:
-        if model.device.type == "meta":
+        # Checks if Rank 0 loaded the model on CPU
+        rank0_is_cpu = [model.device.type == "cpu" if self.rank == 0 else False]
+        dist.broadcast_object_list(rank0_is_cpu, src=0, group=self.fsdp_mesh.get_group())
+
+        if rank0_is_cpu[0]:
+            if getattr(model.config, "tie_word_embeddings", None):
+                model.tie_weights()
+
+            if self.rank == 0:
+                logger.info("init_on_rank0 detected: sharding then scattering Rank 0 CPU weights.")
+                full_sd = {k: v.clone() for k, v in model.state_dict().items()}
+            else:
+                full_sd = {}
+
+            # Reuse existing helper to save persistent=False buffers (e.g. inv_freq) before shard
+            saved_buffers = self._save_non_persistent_buffers(model) if self.rank == 0 else {}
+
+            model = self.prepare_model(model)
+
+            device = get_current_accelerator()
+            model.to_empty(device=device)
+
+            # Scatter params from Rank 0 into all DTensor shards
+            options = StateDictOptions(full_state_dict=True, cpu_offload=True, broadcast_from_rank0=True)
+            set_model_state_dict(model, full_sd, options=options)
+
+            # Reuse existing helper to restore inv_freq etc. on Rank 0, then broadcast to Rank 1+
+            self._restore_non_persistent_buffers(model, saved_buffers)
+
+            for _, buf in model.named_buffers():
+                if buf is not None:
+                    dist.broadcast(buf.data, src=0, group=self.fsdp_mesh.get_group())
+
+            if self.rank == 0:
+                logger.info("init_on_rank0 sync complete.")
+
+        elif model.device.type == "meta":
             non_persistent_buffers = self._save_non_persistent_buffers(model)
 
             if getattr(model.config, "tie_word_embeddings", None):

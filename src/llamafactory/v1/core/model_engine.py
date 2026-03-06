@@ -33,7 +33,7 @@ import torch
 from accelerate import init_empty_weights
 from transformers import AutoConfig, AutoProcessor
 
-from ..accelerator.helper import DeviceType
+from ..accelerator.helper import DeviceType, ReduceOp
 from ..accelerator.interface import DistributedInterface
 from ..config.model_args import ModelArguments, ModelClass
 from ..utils import logging
@@ -147,6 +147,13 @@ class ModelEngine:
             else:
                 logger.info_rank0("Inference the original model")
         else:
+            if self.args.peft_config.name == "lora":
+                dist = DistributedInterface()
+                local_is_meta = int(model.device.type == DeviceType.META)
+                meta_rank_count = int(dist.all_reduce(local_is_meta, op=ReduceOp.SUM, dim=None))
+                if meta_rank_count == dist.get_world_size():
+                    raise ValueError("Currently lora stage does not support loading model by meta.")
+
             from ..plugins.model_plugins.peft import PeftPlugin
 
             model = PeftPlugin(self.args.peft_config.name)(model, self.args.peft_config, self.is_train)
