@@ -97,7 +97,7 @@ def _check_model_support(model_args: "ModelArguments"):
 
 def _freeze_model_parameters(model: Any, finetuning_args: "FinetuningArguments"):
     """Freeze model parameters for qwen_vl series models based on finetuning arguments."""
-    if getattr(model.config, "hf_model_type", None) not in ["qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_vl_moe", "qwen3_5, qwen3_5_moe"]:
+    if getattr(model.config, "hf_model_type", None) not in ["qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_vl_moe", "qwen3_5", "qwen3_5_moe"]:
         return
 
     params_to_freeze = []
