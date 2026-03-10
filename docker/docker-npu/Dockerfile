@@ -33,11 +33,12 @@ RUN pip config set global.index-url "${PIP_INDEX}" && \
 COPY . /app
 
 # Install torch-npu
-RUN pip uninstall -y torch torchvision torchaudio && \
-    pip install --no-cache-dir -r requirements/npu.txt --index-url "${PYTORCH_INDEX}" && \
-    pip install --no-cache-dir -e . --no-build-isolation && \
-    pip install --no-cache-dir -r requirements/metrics.txt --no-build-isolation && \
-    pip install --no-cache-dir -r requirements/deepspeed.txt --no-build-isolation
+RUN source /usr/local/Ascend/ascend-toolkit/set_env.sh
+RUN pip uninstall -y torch torchvision torchaudio
+RUN pip install --no-cache-dir -r requirements/npu.txt --index-url "${PYTORCH_INDEX}"
+RUN pip install --no-cache-dir -r requirements/deepspeed.txt
+RUN pip install --no-cache-dir -e . --no-build-isolation && \
+    pip install --no-cache-dir -r requirements/metrics.txt --no-build-isolation
 
 # Set up volumes
 # VOLUME [ "/root/.cache/huggingface", "/app/shared_data", "/app/output" ]
