@@ -34,9 +34,9 @@ COPY . /app
 
 # Install torch-npu
 RUN pip uninstall -y torch torchvision torchaudio && \
-    pip install --no-cache-dir requirements/npu.txt --index-url "${PYTORCH_INDEX}" && \
+    pip install --no-cache-dir -r requirements/npu.txt --index-url "${PYTORCH_INDEX}" && \
     pip install --no-cache-dir -e . --no-build-isolation && \
-    pip install --no-cache-dir -r requirements/metrics.txt --no-build-isolation \
+    pip install --no-cache-dir -r requirements/metrics.txt --no-build-isolation && \
     pip install --no-cache-dir -r requirements/deepspeed.txt --no-build-isolation
 
 # Set up volumes
