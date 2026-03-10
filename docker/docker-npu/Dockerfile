@@ -1,6 +1,6 @@
 # https://hub.docker.com/r/ascendai/cann/tags
 
-ARG BASE_IMAGE=quay.io/ascend/cann:8.3.rc2-910b-ubuntu22.04-py3.11
+ARG BASE_IMAGE=quay.io/ascend/cann:8.5.1-910b-ubuntu22.04-py3.11
 FROM ${BASE_IMAGE}
 
 # Installation arguments
@@ -34,9 +34,10 @@ COPY . /app
 
 # Install torch-npu
 RUN pip uninstall -y torch torchvision torchaudio && \
-    pip install --no-cache-dir "torch==2.7.1" "torch-npu==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1" --index-url "${PYTORCH_INDEX}" && \
+    pip install --no-cache-dir requirements/npu.txt --index-url "${PYTORCH_INDEX}" && \
     pip install --no-cache-dir -e . --no-build-isolation && \
-    pip install --no-cache-dir -r requirements/metrics.txt --no-build-isolation
+    pip install --no-cache-dir -r requirements/metrics.txt --no-build-isolation \
+    pip install --no-cache-dir -r requirements/deepspeed.txt --no-build-isolation
 
 # Set up volumes
 # VOLUME [ "/root/.cache/huggingface", "/app/shared_data", "/app/output" ]
