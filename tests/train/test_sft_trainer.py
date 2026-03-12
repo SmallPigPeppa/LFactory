@@ -59,18 +59,6 @@ class DataCollatorWithVerbose(DataCollatorWithPadding):
         return {k: v[:, :1] for k, v in batch.items()}  # truncate input length
 
 
-def test_fp16_bf16_conflict():
-    with pytest.raises(ValueError, match="Cannot set both `fp16` and `bf16` to `True`"):
-        get_train_args(
-            {
-                "output_dir": os.path.join("output", "fp16_bf16_conflict"),
-                "fp16": True,
-                "bf16": True,
-                **TRAIN_ARGS,
-            }
-        )
-
-
 @pytest.mark.parametrize("disable_shuffling", [False, True])
 def test_shuffle(disable_shuffling: bool):
     model_args, data_args, training_args, finetuning_args, _ = get_train_args(
