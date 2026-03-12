@@ -245,12 +245,18 @@ class FSDP2Engine:
             logger.info(f"Restored {len(saved_buffers)} non-persistent buffers")
 
     def shard_model(self, model: HFModel) -> HFModel:
-        # Checks if Rank 0 loaded the model on CPU
-        rank0_is_cpu = [model.device.type == "cpu" if self.rank == 0 else False]
-        dist.broadcast_object_list(rank0_is_cpu, src=0, group=self.fsdp_mesh.get_group())
+        # Checks if Rank 0 loaded the model on CPU in distributed FSDP2 mode.
+        rank0_is_cpu = [False]
+        if self.fsdp_mesh is not None:
+            rank0_is_cpu = [model.device.type == "cpu" if self.rank == 0 else False]
+            dist.broadcast_object_list(rank0_is_cpu, src=0, group=self.fsdp_mesh.get_group())
+        else:
+            logger.info_rank0(
+                "Not in distributed FSDP2 mode, skip loading model from rank0 and fall back to default mode."
+            )
 
         if rank0_is_cpu[0]:
-            if getattr(model.config, "tie_word_embeddings", None):
+            if getattr(model.config, "tie_word_embeddings", False):
                 model.tie_weights()
 
             if self.rank == 0:
@@ -274,9 +280,10 @@ class FSDP2Engine:
             # Reuse existing helper to restore inv_freq etc. on Rank 0, then broadcast to Rank 1+
             self._restore_non_persistent_buffers(model, saved_buffers)
 
-            for _, buf in model.named_buffers():
-                if buf is not None:
-                    dist.broadcast(buf.data, src=0, group=self.fsdp_mesh.get_group())
+            # Broadcast and restore non-persistent buffers
+            buffers_to_sync = [saved_buffers]
+            dist.broadcast_object_list(buffers_to_sync, src=0, group=self.fsdp_mesh.get_group())
+            self._restore_non_persistent_buffers(model, buffers_to_sync[0])
 
             if self.rank == 0:
                 logger.info("init_on_rank0 sync complete.")
