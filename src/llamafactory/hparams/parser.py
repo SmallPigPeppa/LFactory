@@ -420,9 +420,6 @@ def get_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS
     if training_args.do_train and model_args.quantization_bit is not None and (not model_args.upcast_layernorm):
         logger.warning_rank0("We recommend enable `upcast_layernorm` in quantized training.")
 
-    if training_args.do_train and training_args.fp16 and training_args.bf16:
-        raise ValueError("Cannot set both `fp16` and `bf16` to `True`, please choose one of them.")
-
     if training_args.do_train and (not training_args.fp16) and (not training_args.bf16):
         logger.warning_rank0("We recommend enable mixed precision training.")
 
