@@ -52,19 +52,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.get_logger(__name__)
-_DEFAULT_NPU_HCCL_CONNECT_TIMEOUT = "600"
-
-
-def set_default_hccl_connect_timeout_for_npu() -> None:
-    r"""Set a safer default HCCL connect timeout for NPU runs."""
-    if not is_torch_npu_available() or "HCCL_CONNECT_TIMEOUT" in os.environ:
-        return
-
-    os.environ["HCCL_CONNECT_TIMEOUT"] = _DEFAULT_NPU_HCCL_CONNECT_TIMEOUT
-    logger.info_rank0(f"Set HCCL_CONNECT_TIMEOUT={_DEFAULT_NPU_HCCL_CONNECT_TIMEOUT} by default for NPU.")
-
-
-set_default_hccl_connect_timeout_for_npu()
 
 
 class AverageMeter:
