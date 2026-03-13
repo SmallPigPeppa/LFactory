@@ -349,8 +349,6 @@ class BaseTrainer:
         if os.path.exists(optim_path):
             self.optimizer.load_state_dict(torch.load(optim_path, map_location=self.device, weights_only=True))
 
-    # ==================== Core training =========================
-
     def compute_log_probs(self, model: HFModel, batch: BatchInput) -> Tensor:
         """Compute log probs.
 
