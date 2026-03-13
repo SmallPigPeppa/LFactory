@@ -129,7 +129,7 @@ def load_rng_state(ckpt_dir: str, rank: int) -> None:
     random.setstate(rng_state["python"])
     np.random.set_state(rng_state["numpy"])
     torch.random.set_rng_state(rng_state["torch"])
-    _set_accelerator_rng_state(rng_state.get("accelerator") or rng_state.get("cuda"))
+    _set_accelerator_rng_state(rng_state.get("accelerator") or (rng_state.get("cuda") if get_current_accelerator().type == DeviceType.CUDA else None))
 
 
 def mark_checkpoint_complete(ckpt_dir: str) -> None:
