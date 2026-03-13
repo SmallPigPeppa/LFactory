@@ -168,8 +168,6 @@ class BaseTrainer:
                 self.optimizer, self.num_training_steps, self.args.lr_scheduler_config
             )
 
-    # ==================== Checkpoint: resolve ====================
-
     def _resolve_checkpoint_path(self, ckpt_path: str) -> str | None:
         """Resolve 'auto' to the latest valid checkpoint, or return the path as-is."""
         if ckpt_path == "auto":
@@ -183,8 +181,6 @@ class BaseTrainer:
                 logger.info_rank0(f"Auto-detected latest checkpoint: {resolved}")
             return resolved
         return ckpt_path
-
-    # ==================== Checkpoint: save ======================
 
     def _save_checkpoint(self, epoch: int) -> None:
         """Save a full training checkpoint at the current global step."""
@@ -256,8 +252,6 @@ class BaseTrainer:
 
             os.makedirs(os.path.join(ckpt_dir, "optimizer"), exist_ok=True)
             torch.save(self.optimizer.state_dict(), os.path.join(ckpt_dir, "optimizer", "state_dict.pt"))
-
-    # ==================== Checkpoint: load ======================
 
     def _resume_from_checkpoint(self, ckpt_path: str) -> None:
         """Restore full training state from a checkpoint directory."""
