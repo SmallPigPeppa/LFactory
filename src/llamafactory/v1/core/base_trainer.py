@@ -284,11 +284,11 @@ class BaseTrainer:
         if self._dist_name != "deepspeed":
             sched_path = os.path.join(ckpt_dir, "scheduler.pt")
             if os.path.exists(sched_path):
-                self.lr_scheduler.load_state_dict(torch.load(sched_path, map_location="cpu"))
+                self.lr_scheduler.load_state_dict(torch.load(sched_path, map_location="cpu", weights_only=True))
 
         dl_path = os.path.join(ckpt_dir, f"dataloader_{rank}.pt")
         if os.path.exists(dl_path):
-            self.train_batch_generator.load_state_dict(torch.load(dl_path, map_location="cpu"))
+            self.train_batch_generator.load_state_dict(torch.load(dl_path, map_location="cpu", weights_only=False))
 
         if self._dist_name != "deepspeed":
             load_rng_state(ckpt_dir, rank)
@@ -335,7 +335,7 @@ class BaseTrainer:
             adapter_file = os.path.join(model_dir, "adapter_model.safetensors")
             if not os.path.exists(adapter_file):
                 adapter_file = os.path.join(model_dir, "adapter_model.bin")
-                adapter_state = torch.load(adapter_file, map_location="cpu")
+                adapter_state = torch.load(adapter_file, map_location="cpu", weights_only=True)
             else:
                 adapter_state = load_file(adapter_file, device="cpu")
             set_peft_model_state_dict(model_to_load, adapter_state)
@@ -345,7 +345,7 @@ class BaseTrainer:
                 state_dict.update(load_file(f, device="cpu"))
             if not state_dict:
                 for f in sorted(glob_module.glob(os.path.join(model_dir, "*.bin"))):
-                    state_dict.update(torch.load(f, map_location="cpu"))
+                    state_dict.update(torch.load(f, map_location="cpu", weights_only=True))
             if state_dict:
                 model_to_load.load_state_dict(state_dict)
             else:
@@ -353,7 +353,7 @@ class BaseTrainer:
 
         optim_path = os.path.join(ckpt_dir, "optimizer", "state_dict.pt")
         if os.path.exists(optim_path):
-            self.optimizer.load_state_dict(torch.load(optim_path, map_location=self.device))
+            self.optimizer.load_state_dict(torch.load(optim_path, map_location=self.device, weights_only=True))
 
     # ==================== Core training =========================
 

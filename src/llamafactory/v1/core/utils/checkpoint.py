@@ -125,7 +125,7 @@ def load_rng_state(ckpt_dir: str, rank: int) -> None:
     path = os.path.join(ckpt_dir, f"rng_state_{rank}.pt")
     if not os.path.exists(path):
         return
-    rng_state = torch.load(path, map_location="cpu")
+    rng_state = torch.load(path, map_location="cpu", weights_only=False)
     random.setstate(rng_state["python"])
     np.random.set_state(rng_state["numpy"])
     torch.random.set_rng_state(rng_state["torch"])

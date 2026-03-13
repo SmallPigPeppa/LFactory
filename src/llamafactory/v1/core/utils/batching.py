@@ -204,13 +204,13 @@ class BatchGenerator(Iterator):
 
     def state_dict(self) -> dict[str, Any]:
         return {
-            "buffer": self._buffer,
+            "buffer": self._buffer.state_dict(),
             "buffer_tokens": self._buffer_tokens,
             "data_provider": self._data_provider.state_dict(),
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
-        self._buffer = state["buffer"]
+        self._buffer.load_state_dict(state["buffer"])
         self._buffer_tokens = state["buffer_tokens"]
         self._data_provider.load_state_dict(state["data_provider"])
         self._is_resuming = True
