@@ -107,6 +107,7 @@ class BatchGenerator(Iterator):
         self._is_resuming: bool = False
         self._data_iter = iter(self._data_provider)
         self._buffer = StatefulBuffer()
+        self._buffer_tokens: int = 0
 
         self._batch_info: BatchInfo = {
             "micro_batch_size": self.micro_batch_size,

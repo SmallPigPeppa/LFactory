@@ -85,6 +85,22 @@ class TrainingArguments:
         default=42,
         metadata={"help": "Random seed that will be set at the beginning of training."},
     )
+    resume_from_checkpoint: str | None = field(
+        default=None,
+        metadata={"help": "Path to a checkpoint directory to resume training from, or 'auto' to find the latest."},
+    )
+    save_steps: int | None = field(
+        default=None,
+        metadata={"help": "Save a training checkpoint every N global steps."},
+    )
+    save_on_epoch_end: bool = field(
+        default=False,
+        metadata={"help": "Save a training checkpoint at the end of each epoch."},
+    )
+    save_total_limit: int | None = field(
+        default=None,
+        metadata={"help": "Maximum number of checkpoints to keep. Oldest checkpoints are deleted."},
+    )
 
     def __post_init__(self) -> None:
         self.dist_config = get_plugin_config(self.dist_config)
