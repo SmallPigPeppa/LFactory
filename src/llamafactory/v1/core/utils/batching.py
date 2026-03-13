@@ -107,7 +107,6 @@ class BatchGenerator(Iterator):
         self._is_resuming: bool = False
         self._data_iter = iter(self._data_provider)
         self._buffer = StatefulBuffer()
-        self._buffer_tokens: int = 0
 
         self._batch_info: BatchInfo = {
             "micro_batch_size": self.micro_batch_size,
@@ -166,7 +165,6 @@ class BatchGenerator(Iterator):
     def __iter__(self):
         if not self._is_resuming:
             self._buffer.clear()
-            self._buffer_tokens = 0
 
         self._data_iter = iter(self._data_provider)
         self._is_resuming = False
@@ -205,13 +203,11 @@ class BatchGenerator(Iterator):
     def state_dict(self) -> dict[str, Any]:
         return {
             "buffer": self._buffer.state_dict(),
-            "buffer_tokens": self._buffer_tokens,
             "data_provider": self._data_provider.state_dict(),
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
         self._buffer.load_state_dict(state["buffer"])
-        self._buffer_tokens = state["buffer_tokens"]
         self._data_provider.load_state_dict(state["data_provider"])
         self._is_resuming = True
 
