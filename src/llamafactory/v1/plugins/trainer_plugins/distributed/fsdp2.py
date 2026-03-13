@@ -245,17 +245,9 @@ class FSDP2Engine:
             logger.info(f"Restored {len(saved_buffers)} non-persistent buffers")
 
     def shard_model(self, model: HFModel) -> HFModel:
-        # Checks if Rank 0 loaded the model on CPU in distributed FSDP2 mode.
-        rank0_is_cpu = [False]
-        if self.fsdp_mesh is not None:
-            rank0_is_cpu = [model.device.type == "cpu" if self.rank == 0 else False]
-            dist.broadcast_object_list(rank0_is_cpu, src=0, group=self.fsdp_mesh.get_group())
-        else:
-            logger.info_rank0(
-                "Not in distributed FSDP2 mode, skip loading model from rank0 and fall back to default mode."
-            )
+        init_mode = getattr(model, "_init_mode", "init_on_default")
 
-        if rank0_is_cpu[0]:
+        if init_mode == "init_on_rank0":
             if getattr(model.config, "tie_word_embeddings", False):
                 model.tie_weights()
 
@@ -277,9 +269,6 @@ class FSDP2Engine:
             options = StateDictOptions(full_state_dict=True, cpu_offload=True, broadcast_from_rank0=True)
             set_model_state_dict(model, full_sd, options=options)
 
-            # Reuse existing helper to restore inv_freq etc. on Rank 0, then broadcast to Rank 1+
-            self._restore_non_persistent_buffers(model, saved_buffers)
-
             # Broadcast and restore non-persistent buffers
             buffers_to_sync = [saved_buffers]
             dist.broadcast_object_list(buffers_to_sync, src=0, group=self.fsdp_mesh.get_group())
@@ -288,23 +277,24 @@ class FSDP2Engine:
             if self.rank == 0:
                 logger.info("init_on_rank0 sync complete.")
 
-        elif model.device.type == "meta":
+        elif init_mode == "init_on_meta":
             non_persistent_buffers = self._save_non_persistent_buffers(model)
 
-            if getattr(model.config, "tie_word_embeddings", None):
+            if getattr(model.config, "tie_word_embeddings", False):
                 model.tie_weights()
 
             model = self.prepare_model(model)
             model = self.materialize_and_load(model, hf_model_path=model.config.name_or_path, dcp_path=self.dcp_path)
 
             # fix tied broken for no-fsdp-wrap case
-            if getattr(model.config, "tie_word_embeddings", None):
+            if getattr(model.config, "tie_word_embeddings", False):
                 model.tie_weights()
 
             self._restore_non_persistent_buffers(model, non_persistent_buffers)
 
         else:
             model = self.prepare_model(model)
+
         return model
 
     def _load_from_dcp(self, model: HFModel, dcp_path: str):

@@ -33,7 +33,7 @@ import torch
 from accelerate import init_empty_weights
 from transformers import AutoConfig, AutoProcessor
 
-from ..accelerator.helper import DeviceType, ReduceOp
+from ..accelerator.helper import DeviceType
 from ..accelerator.interface import DistributedInterface
 from ..config.model_args import ModelArguments, ModelClass
 from ..utils import logging
@@ -140,6 +140,9 @@ class ModelEngine:
                 **init_kwargs,
             )
 
+        init_mode = self.args.init_config.name if self.args.init_config is not None else "init_on_default"
+        model._init_mode = init_mode
+
         if self.args.peft_config is None:
             if self.is_train:
                 logger.info_rank0("Fine-tuning mode: full tuning")
@@ -147,12 +150,8 @@ class ModelEngine:
             else:
                 logger.info_rank0("Inference the original model")
         else:
-            if self.args.peft_config.name == "lora":
-                dist = DistributedInterface()
-                local_is_meta = int(model.device.type == DeviceType.META)
-                meta_rank_count = int(dist.all_reduce(local_is_meta, op=ReduceOp.SUM, dim=None))
-                if meta_rank_count == dist.get_world_size():
-                    raise ValueError("Currently lora stage does not support loading model by meta.")
+            if self.args.peft_config.name == "lora" and init_mode == "init_on_meta":
+                raise ValueError("Currently lora stage does not support loading model by meta.")
 
             from ..plugins.model_plugins.peft import PeftPlugin
 
