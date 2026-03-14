@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from ...extras import logging
@@ -26,6 +26,32 @@ if TYPE_CHECKING:
 
 
 logger = logging.get_logger(__name__)
+
+
+@dataclass
+class PackingParams:
+    r"""Metadata for a packed sequence: sub-sequence boundaries and multimodal data indices.
+
+    - sequence_boundaries: cumulative token positions, e.g. [0, 100, 250, 512] means 3 sub-seqs
+      with token ranges [0,100), [100,250), [250,512). Length = num_sub_seqs + 1.
+    - image_subseq_ids / video_subseq_ids / audio_subseq_ids: for each mm item, the 0-based
+      sub-sequence index it belongs to. Length = total number of that mm type in the packed sample.
+    """
+
+    sequence_boundaries: list[int]
+    image_subseq_ids: list[int]
+    video_subseq_ids: list[int]
+    audio_subseq_ids: list[int]
+
+    def num_sub_seqs(self) -> int:
+        return len(self.sequence_boundaries) - 1
+
+    def subseq_range(self, subseq_idx: int) -> tuple[int, int]:
+        """Return (start, end) token indices for sub-sequence subseq_idx (0-based)."""
+        return (
+            self.sequence_boundaries[subseq_idx],
+            self.sequence_boundaries[subseq_idx + 1],
+        )
 
 
 @dataclass
@@ -166,6 +192,11 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
         for knapsack in knapsacks:
             packed_input_ids, packed_attention_masks, packed_position_ids, packed_labels = [], [], [], []
             packed_images, packed_videos, packed_audios = [], [], []
+            packed_images_counts, packed_videos_counts, packed_audios_counts = [], [], []
+            sequence_boundaries = [0]
+            image_subseq_ids: list[int] = []
+            video_subseq_ids: list[int] = []
+            audio_subseq_ids: list[int] = []
             for i, length in enumerate(knapsack):
                 index = length2indexes[length].pop()
                 packed_input_ids += batch_input_ids[index]
@@ -174,6 +205,18 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
                 packed_images += batch_images[index]
                 packed_videos += batch_videos[index]
                 packed_audios += batch_audios[index]
+                # FIXME if pure text examples are packed, 
+                # we should not count them.
+                n_img = len(batch_images[index])
+                n_vid = len(batch_videos[index])
+                n_aud = len(batch_audios[index])
+                packed_images_counts.append(n_img)
+                packed_videos_counts.append(n_vid)
+                packed_audios_counts.append(n_aud)
+                sequence_boundaries.append(sequence_boundaries[-1] + len(batch_input_ids[index]))
+                image_subseq_ids.extend([i] * n_img)
+                video_subseq_ids.extend([i] * n_vid)
+                audio_subseq_ids.extend([i] * n_aud)
                 if self.data_args.neat_packing:
                     packed_attention_masks += [i + 1] * len(batch_input_ids[index])  # start from 1
                 else:
@@ -192,7 +235,19 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
             if len(packed_input_ids) != self.data_args.cutoff_len + 1:
                 raise ValueError("The length of packed example should be identical to the cutoff length.")
 
+            packing_params = PackingParams(
+                sequence_boundaries=sequence_boundaries,
+                image_subseq_ids=image_subseq_ids,
+                video_subseq_ids=video_subseq_ids,
+                audio_subseq_ids=audio_subseq_ids,
+            )
             model_inputs["input_ids"].append(packed_input_ids)
+            # for mmrope preparation when using packed sequences.
+            if self.data_args.neat_packing:
+                model_inputs["packing_params"].append(asdict(packing_params))
+                model_inputs["packed_images_counts"].append(packed_images_counts)
+                model_inputs["packed_videos_counts"].append(packed_videos_counts)
+                model_inputs["packed_audios_counts"].append(packed_audios_counts)
             model_inputs["attention_mask"].append(packed_attention_masks)
             model_inputs["position_ids"].append(packed_position_ids)
             model_inputs["labels"].append(packed_labels)

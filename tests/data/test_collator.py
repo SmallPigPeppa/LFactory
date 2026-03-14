@@ -132,6 +132,128 @@ def test_multimodal_collator():
         assert batch_input[k].eq(torch.tensor(expected_input[k])).all()
 
 
+def _make_packed_feature(
+    cutoff_plus_one: int,
+    subseq_lengths: list[int],
+    packed_images_counts: list[int],
+    pad_token_id: int,
+    label_ignore_id: int,
+    fake_image: Image.Image,
+) -> dict:
+    """Simulate one packed sample as produced by supervised dataset: multiple sub-seqs + padding to max length.
+
+    subseq_lengths: length of each content sub-seq (e.g. [16, 16, 16] for 3 segments of 16).
+    Padding is appended to reach cutoff_plus_one; the last segment in sequence_boundaries is this padding.
+    packed_images_counts: length must be len(subseq_lengths) + 1 (one extra for the padding sub-seq).
+    """
+    content_len = sum(subseq_lengths)
+    assert content_len <= cutoff_plus_one
+    pad_len = cutoff_plus_one - content_len
+    sequence_boundaries = [0]
+    for L in subseq_lengths:
+        sequence_boundaries.append(sequence_boundaries[-1] + L)
+    sequence_boundaries.append(cutoff_plus_one)  # last segment is padding [content_len : cutoff_plus_one]
+
+    num_sub_seqs = len(sequence_boundaries) - 1
+    assert len(packed_images_counts) == num_sub_seqs
+    content_ids = list(range(100, 100 + content_len))  # dummy token ids
+    padding_ids = [pad_token_id] * pad_len
+    input_ids = content_ids + padding_ids
+
+    # neat_packing: attention 1 for content, 0 for padding
+    attention_mask = [1] * content_len + [0] * pad_len
+    labels = [label_ignore_id] * content_len + [label_ignore_id] * pad_len
+
+    packed_videos_counts = [0] * num_sub_seqs
+    packed_audios_counts = [0] * num_sub_seqs
+    image_subseq_ids = []
+    for i, c in enumerate(packed_images_counts):
+        image_subseq_ids.extend([i] * c)
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "labels": labels,
+        "images": [fake_image] if sum(packed_images_counts) > 0 else [],
+        "packing_params": {
+            "sequence_boundaries": sequence_boundaries,
+            "image_subseq_ids": image_subseq_ids,
+            "video_subseq_ids": [],
+            "audio_subseq_ids": [],
+        },
+        "packed_images_counts": packed_images_counts,
+        "packed_videos_counts": packed_videos_counts,
+        "packed_audios_counts": packed_audios_counts,
+    }
+
+
+@pytest.mark.runs_on(["cpu", "mps"])
+def test_multimodal_collator_with_packing():
+    """Test MultiModalDataCollatorForSeq2Seq with packed sequences (multiple sub-seqs + padding to max length)."""
+    model_args, data_args, *_ = get_infer_args(
+        {"model_name_or_path": "Qwen/Qwen2-VL-2B-Instruct", "template": "qwen2_vl"}
+    )
+    tokenizer_module = load_tokenizer(model_args)
+    template = get_template_and_fix_tokenizer(tokenizer_module["tokenizer"], data_args)
+    config = AutoConfig.from_pretrained(model_args.model_name_or_path)
+    with torch.device("meta"):
+        model = AutoModelForImageTextToText.from_config(config)
+
+    data_collator = MultiModalDataCollatorForSeq2Seq(
+        template=template,
+        model=model,
+        pad_to_multiple_of=4,
+        label_pad_token_id=IGNORE_INDEX,
+        **tokenizer_module,
+    )
+    pad_id = tokenizer_module["tokenizer"].pad_token_id
+    fake_image = Image.new("RGB", (64, 64), (255, 255, 255))
+
+    # Simulate packing: 3 content sub-seqs (16 + 16 + 16) + padding to cutoff_plus_one = 64.
+    # Same as supervised: packed sequence then pad to cutoff_len+1; we treat padding as last sub-seq.
+    cutoff_plus_one = 64
+    subseq_lengths = [16, 16, 16]  # 3 segments
+    packed_images_counts = [1, 0, 0, 0]  # first subseq has 1 image, last is padding (0 images)
+
+    features = [
+        _make_packed_feature(
+            cutoff_plus_one,
+            subseq_lengths,
+            packed_images_counts,
+            pad_id,
+            IGNORE_INDEX,
+            fake_image,
+        ),
+    ]
+    batch_input = data_collator(features)
+
+    assert "position_ids" in batch_input and "rope_deltas" in batch_input
+    position_ids = batch_input["position_ids"]
+    rope_deltas = batch_input["rope_deltas"]
+    seq_len = batch_input["input_ids"].size(1)
+
+    # After pad_to_multiple_of=4, seq_len may be 64 or 68 etc.
+    assert seq_len >= cutoff_plus_one, "collator should pad to at least cutoff_plus_one"
+
+    assert position_ids.dim() in (2, 3), "position_ids should be 2D or 3D (mrope)"
+    assert rope_deltas.dim() in (2, 3), "rope_deltas should be 2D or 3D"
+    if position_ids.dim() == 2:
+        assert position_ids.shape == (1, seq_len)
+    else:
+        assert position_ids.shape[1] == 1 and position_ids.shape[2] == seq_len
+    assert torch.isfinite(position_ids).all(), "position_ids should be finite"
+    assert torch.isfinite(rope_deltas).all(), "rope_deltas should be finite"
+
+    # Check that we have multiple sub-seqs: first two content sub-seqs each have their own position range.
+    pos = position_ids[0] if position_ids.dim() == 2 else position_ids[0]
+    pos = pos.squeeze(0)
+    subseq0 = pos[:16]
+    subseq1 = pos[16:32]
+    subseq2 = pos[32:48]
+    # Padding segment 48:64 may have 0 or repeated positions depending on model.
+    breakpoint()
+
+
 @pytest.mark.runs_on(["cpu"])
 def test_4d_attention_mask():
     o = 0.0

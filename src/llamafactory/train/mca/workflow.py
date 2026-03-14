@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import json
 import functools
 import json
 import os
@@ -46,6 +48,19 @@ from mcore_adapter.trainer import DPOTrainer as McaDPOTrainer
 from mcore_adapter.trainer import McaTrainer
 from mcore_adapter.trainer.dpo_config import DPOConfig
 
+# from megatron.core.transformer.moe import moe_layer as _moe_layer
+# import megatron.core.transformer.spec_utils as _spec_utils
+
+# _original_build_module = _spec_utils.build_module
+
+# def _patched_build_module(spec, *args, **kwargs):
+#     # 如果 spec.params 中有 gate，从 kwargs 中移除
+#     if hasattr(spec, 'params') and isinstance(spec.params, dict):
+#         if 'gate' in spec.params and 'gate' in kwargs:
+#             kwargs.pop('gate')
+#     return _original_build_module(spec, *args, **kwargs)
+
+# _spec_utils.build_module = _patched_build_module
 
 if TYPE_CHECKING:
     from mcore_adapter.training_args import Seq2SeqTrainingArguments as McaSeq2SeqTrainingArguments

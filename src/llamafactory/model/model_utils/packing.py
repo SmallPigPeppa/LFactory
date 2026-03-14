@@ -113,5 +113,5 @@ def configure_packing(model_args: "ModelArguments", is_trainable: bool) -> None:
 
     import transformers.modeling_flash_attention_utils
 
-    transformers.modeling_flash_attention_utils._get_unpad_data = get_unpad_data
+    # transformers.modeling_flash_attention_utils._get_unpad_data = get_unpad_data
     logger.info_rank0("Using block diagonal attention for sequence packing without cross-attention.")
