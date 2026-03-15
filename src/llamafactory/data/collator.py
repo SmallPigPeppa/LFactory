@@ -53,14 +53,17 @@ def _slice_mm_inputs_for_sample(
     image_grid_thw / video_grid_thw have shape [num_items, 3]. Indices for sample batch_idx
     are batch_imglens[batch_idx] images and batch_vidlens[batch_idx] videos. When subseq_idx
     is given, further restrict to that sub-seq's counts via packed_*_counts.
+    has_dummy_image=True means only batch[0] will be concated with fake image and no multimodal data.
     """
     image_start_idx = sum(batch_imglens[:batch_idx])
     image_end_idx = sum(batch_imglens[: batch_idx + 1])
     video_start_idx = sum(batch_vidlens[:batch_idx])
     video_end_idx = sum(batch_vidlens[: batch_idx + 1])
+
     if subseq_idx is not None and images_per_subseq is not None:
         image_start_idx += sum(images_per_subseq[:subseq_idx])
         image_end_idx = image_start_idx + images_per_subseq[subseq_idx]
+
     if subseq_idx is not None and videos_per_subseq is not None:
         video_start_idx += sum(videos_per_subseq[:subseq_idx])
         video_end_idx = video_start_idx + videos_per_subseq[subseq_idx]
@@ -72,20 +75,24 @@ def _slice_mm_inputs_for_sample(
             sliced_mm_inputs["image_grid_thw"] = image_grid_thw[image_start_idx:image_end_idx]
         else:
             sliced_mm_inputs["image_grid_thw"] = None
+
     if "video_grid_thw" in mm_inputs:
         video_grid_thw = mm_inputs["video_grid_thw"]
         if video_grid_thw is not None and video_end_idx > video_start_idx:
             sliced_mm_inputs["video_grid_thw"] = video_grid_thw[video_start_idx:video_end_idx]
         else:
             sliced_mm_inputs["video_grid_thw"] = None
-    if "second_per_grid_ts" in mm_inputs:
+
+    if "second_per_grid_ts" in mm_inputs: # qwen2.5vl
         second_per_grid_ts = mm_inputs["second_per_grid_ts"]
-        if second_per_grid_ts is not None and image_end_idx > image_start_idx:
-            sliced_mm_inputs["second_per_grid_ts"] = second_per_grid_ts[image_start_idx:image_end_idx]
-    if "video_second_per_grid" in mm_inputs:
+        if second_per_grid_ts is not None and video_end_idx > video_start_idx:
+            sliced_mm_inputs["second_per_grid_ts"] = second_per_grid_ts[video_start_idx:video_end_idx]
+
+    if "video_second_per_grid" in mm_inputs: # qwen omni
         video_second_per_grid = mm_inputs["video_second_per_grid"]
         if video_second_per_grid is not None and video_end_idx > video_start_idx:
             sliced_mm_inputs["video_second_per_grid"] = video_second_per_grid[video_start_idx:video_end_idx]
+
     return sliced_mm_inputs
 
 
@@ -208,6 +215,7 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
         batch_vidlens: list[int],
         batch_audlens: list[int],
         has_dummy_image: bool,
+        fake_input_ids_len: int,
     ) -> None:
         r"""Compute position_ids and rope_deltas per sample (or per sub-sequence when packed), then merge and validate."""
         bsz = features["input_ids"].size(0)
@@ -215,21 +223,28 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
         all_position_ids: list[torch.Tensor] = []
         all_rope_deltas: list[torch.Tensor] = []
 
-        for sample_idx in range(bsz):
-            sample_packing = packing_params_list[sample_idx] if sample_idx < len(packing_params_list) else {}
+        if has_dummy_image:
+            # for [0, seq_len] = [0, unpadded_length + right_padding_length + fake_input_ids_len + collator_padding_length]
+            # fake_input_start_idx = features["input_ids"][0].tolist().index(self.model.config.vision_start_token_id)
+            unpadded_length = packing_params_list[0].get("unpadded_length") or 0
+            right_padding_length = packing_params_list[0].get("right_padding_length") or 0
+            collator_padding_length = seq_len - unpadded_length - right_padding_length - fake_input_ids_len
+            fake_input_padding_length = fake_input_ids_len + collator_padding_length
+            dummy_image_right_padding_mrope = torch.zeros((3, bsz, fake_input_padding_length))
+            dummy_image_right_padding_attention_mask = torch.zeros((bsz, fake_input_padding_length))
+            assert self.tokenizer.padding_side == "right", "padding_side should be right when fake image is injected"
+
+        for sample_idx in range(bsz): # when packing shall we deal with bsz > 1???
+            sample_packing = (packing_params_list[sample_idx] or {}) if sample_idx < len(packing_params_list) else {}
             sequence_boundaries = sample_packing.get("sequence_boundaries")
             num_sub_seqs = (len(sequence_boundaries) - 1) if sequence_boundaries and len(sequence_boundaries) > 1 else 1
             image_subseq_ids = sample_packing.get("image_subseq_ids") or []
             video_subseq_ids = sample_packing.get("video_subseq_ids") or []
-            audio_subseq_ids = sample_packing.get("audio_subseq_ids") or []
             images_per_subseq = (
                 [image_subseq_ids.count(i) for i in range(num_sub_seqs)] if image_subseq_ids and num_sub_seqs > 1 else None
             )
             videos_per_subseq = (
                 [video_subseq_ids.count(i) for i in range(num_sub_seqs)] if video_subseq_ids and num_sub_seqs > 1 else None
-            )
-            audios_per_subseq = (
-                [audio_subseq_ids.count(i) for i in range(num_sub_seqs)] if audio_subseq_ids and num_sub_seqs > 1 else None
             )
             if num_sub_seqs <= 1:
                 sample_features = {
@@ -237,7 +252,7 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
                     "attention_mask": features["attention_mask"][sample_idx : sample_idx + 1],
                 }
                 mm_inputs_for_sample = _slice_mm_inputs_for_sample(
-                    mm_inputs, batch_imglens, batch_vidlens, batch_audlens, sample_idx
+                    mm_inputs, batch_imglens, batch_vidlens, sample_idx=sample_idx
                 )
                 self._compute_rope_position_ids(sample_features, mm_inputs_for_sample)
                 all_position_ids.append(sample_features["position_ids"])
@@ -259,7 +274,7 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
                         sample_idx,
                         images_per_subseq,
                         videos_per_subseq,
-                        subseq_idx,
+                        subseq_idx
                     )
                     self._compute_rope_position_ids(subseq_features, mm_inputs_for_subseq)
                     sample_position_ids.append(subseq_features["position_ids"])
@@ -275,7 +290,10 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
         )
         # Check if position_ids shape matches expected shape.
         # for further usage, we should padding to the right when some padding token on the right.
-        breakpoint()
+        if has_dummy_image:
+            features["position_ids"] = torch.cat([features["position_ids"], dummy_image_right_padding_mrope], dim=-1)
+            features["attention_mask"] = torch.cat([features["attention_mask"], dummy_image_right_padding_attention_mask], dim=-1)
+
         if features["position_ids"].shape != expected_position_ids_shape:
             raise ValueError(
                 "Merged position_ids shape mismatch: "
@@ -370,8 +388,9 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
 
         if self.get_rope_func is not None:
             # for mmrope situation, we should calculate position_ids and rope_deltas per sample.
+            # When neat_packing is on, each sample has packing_params; None means no packing for that sample.
             boundaries_list = [
-                (p or {}).get("sequence_boundaries") for p in packing_params_list
+                p.get("sequence_boundaries") for p in packing_params_list
             ]
             has_packing = any(b is not None and len(b) > 2 for b in boundaries_list)
             # When fake image/audio was injected, sequence_boundaries no longer match the tensor; use non-packing path.
@@ -388,6 +407,7 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
                     batch_vidlens,
                     batch_audlens,
                     has_dummy_image,
+                    len(fake_input_ids),
                 )
 
             # For transformers compatibility, after https://github.com/huggingface/transformers/issues/39400

@@ -42,6 +42,8 @@ class PackingParams:
     image_subseq_ids: list[int]
     video_subseq_ids: list[int]
     audio_subseq_ids: list[int]
+    unpadded_length: int
+    right_padding_length: int
 
 @dataclass
 class SupervisedDatasetProcessor(DatasetProcessor):
@@ -202,6 +204,7 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
                 image_subseq_ids.extend([i] * n_img)
                 video_subseq_ids.extend([i] * n_vid)
                 audio_subseq_ids.extend([i] * n_aud)
+                unpadded_length = len(batch_input_ids[index])
                 if self.data_args.neat_packing:
                     packed_attention_masks += [i + 1] * len(batch_input_ids[index])  # start from 1
                 else:
@@ -227,6 +230,8 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
                 image_subseq_ids=image_subseq_ids,
                 video_subseq_ids=video_subseq_ids,
                 audio_subseq_ids=audio_subseq_ids,
+                unpadded_length=unpadded_length,
+                right_padding_length=self.data_args.cutoff_len - len(packed_input_ids) + 1,
             )
             model_inputs["input_ids"].append(packed_input_ids)
             # for mmrope preparation when using packed sequences.
