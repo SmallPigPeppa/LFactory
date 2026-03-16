@@ -24,6 +24,13 @@
       "tools": "tools"
     }
   },
+  "sgsc_b2b_entities": {
+    "hf_hub_url": "Nooxus-AI/NOO-Verified-Global-Entities",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    }
+  },
   "mllm_demo": {
     "file_name": "mllm_demo.json",
     "formatting": "sharegpt",
