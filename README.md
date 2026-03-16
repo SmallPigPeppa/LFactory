@@ -626,6 +626,16 @@ pip install .
 
 3. Set `double_quantization: false` in the configuration. You can refer to the [example](examples/train_qlora/qwen3_lora_sft_bnb_npu.yaml).
 
+#### FSDP training note
+
+For `Ascend NPU + transformers 5.x or later + FSDP` training, it is recommended to increase `HCCL_CONNECT_TIMEOUT` manually before launch, for example:
+
+```bash
+export HCCL_CONNECT_TIMEOUT=1800
+```
+
+This is a runtime recommendation and is not modified automatically by LLaMA Factory.
+
 </details>
 
 ### Data Preparation
