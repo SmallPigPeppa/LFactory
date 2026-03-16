@@ -69,29 +69,22 @@ def _slice_mm_inputs_for_sample(
         video_end_idx = video_start_idx + videos_per_subseq[subseq_idx]
 
     sliced_mm_inputs: dict[str, Any] = {}
-    if "image_grid_thw" in mm_inputs:
-        image_grid_thw = mm_inputs["image_grid_thw"]
-        if image_grid_thw is not None and image_end_idx > image_start_idx:
-            sliced_mm_inputs["image_grid_thw"] = image_grid_thw[image_start_idx:image_end_idx]
-        else:
-            sliced_mm_inputs["image_grid_thw"] = None
+    key_to_slice_meta = {
+        "image_grid_thw": (image_start_idx, image_end_idx, True),
+        "video_grid_thw": (video_start_idx, video_end_idx, True),
+        "second_per_grid_ts": (video_start_idx, video_end_idx, False),  # qwen2.5vl
+        "video_second_per_grid": (video_start_idx, video_end_idx, False),  # qwen omni
+    }
 
-    if "video_grid_thw" in mm_inputs:
-        video_grid_thw = mm_inputs["video_grid_thw"]
-        if video_grid_thw is not None and video_end_idx > video_start_idx:
-            sliced_mm_inputs["video_grid_thw"] = video_grid_thw[video_start_idx:video_end_idx]
-        else:
-            sliced_mm_inputs["video_grid_thw"] = None
+    for key, (start_idx, end_idx, assign_none_when_empty) in key_to_slice_meta.items():
+        if key not in mm_inputs:
+            continue
 
-    if "second_per_grid_ts" in mm_inputs: # qwen2.5vl
-        second_per_grid_ts = mm_inputs["second_per_grid_ts"]
-        if second_per_grid_ts is not None and video_end_idx > video_start_idx:
-            sliced_mm_inputs["second_per_grid_ts"] = second_per_grid_ts[video_start_idx:video_end_idx]
-
-    if "video_second_per_grid" in mm_inputs: # qwen omni
-        video_second_per_grid = mm_inputs["video_second_per_grid"]
-        if video_second_per_grid is not None and video_end_idx > video_start_idx:
-            sliced_mm_inputs["video_second_per_grid"] = video_second_per_grid[video_start_idx:video_end_idx]
+        mm_value = mm_inputs[key]
+        if mm_value is not None and end_idx > start_idx:
+            sliced_mm_inputs[key] = mm_value[start_idx:end_idx]
+        elif assign_none_when_empty:
+            sliced_mm_inputs[key] = None
 
     return sliced_mm_inputs
 
@@ -315,7 +308,7 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
             batch_vidlens.append(len(videos))
             batch_audlens.append(len(audios))
             batch_input_ids.append(feature["input_ids"])
-            packing_params_list.append(feature.pop("packing_params", []))
+            packing_params_list.append(feature.pop("packing_params", None))
 
         fake_input_ids = []
         has_dummy_image = False
