@@ -315,7 +315,7 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
             batch_vidlens.append(len(videos))
             batch_audlens.append(len(audios))
             batch_input_ids.append(feature["input_ids"])
-            packing_params_list.append(feature.pop("packing_params", None))
+            packing_params_list.append(feature.pop("packing_params", []))
 
         fake_input_ids = []
         has_dummy_image = False
