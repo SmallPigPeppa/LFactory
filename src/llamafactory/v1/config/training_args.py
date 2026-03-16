@@ -93,9 +93,15 @@ class TrainingArguments:
         default=None,
         metadata={"help": "Save a training checkpoint every N global steps."},
     )
-    save_on_epoch_end: bool = field(
+    save_epochs: float | None = field(
+        default=None,
+        metadata={"help": "Save a training checkpoint every N epochs."},
+    )
+    save_ckpt_as_hf: bool = field(
         default=False,
-        metadata={"help": "Save a training checkpoint at the end of each epoch."},
+        metadata={
+            "help": "Save intermediate checkpoints in HuggingFace format instead of distributed format. Warning: doubles memory usage."
+        },
     )
     save_total_limit: int | None = field(
         default=None,

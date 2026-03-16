@@ -117,22 +117,24 @@ def save_rng_state(ckpt_dir: str, rank: int) -> None:
         "torch": torch.random.get_rng_state(),
         "accelerator": _get_accelerator_rng_state(),
     }
-    torch.save(rng_state, os.path.join(ckpt_dir, f"rng_state_{rank}.pt"))
+    rng_dir = os.path.join(ckpt_dir, "rng_state")
+    os.makedirs(rng_dir, exist_ok=True)
+    torch.save(rng_state, os.path.join(rng_dir, f"rank_{rank}.pt"))
 
 
 def load_rng_state(ckpt_dir: str, rank: int) -> None:
     """Restore per-rank RNG states from a checkpoint."""
-    path = os.path.join(ckpt_dir, f"rng_state_{rank}.pt")
+    path = os.path.join(ckpt_dir, "rng_state", f"rank_{rank}.pt")
+
     if not os.path.exists(path):
+        logger.warning_rank0(f"RNG state file not found at {path}. Skipping RNG state restoration.")
         return
+
     rng_state = torch.load(path, map_location="cpu", weights_only=False)
     random.setstate(rng_state["python"])
     np.random.set_state(rng_state["numpy"])
     torch.random.set_rng_state(rng_state["torch"])
-    _set_accelerator_rng_state(
-        rng_state.get("accelerator")
-        or (rng_state.get("cuda") if get_current_accelerator().type == DeviceType.CUDA else None)
-    )
+    _set_accelerator_rng_state(rng_state.get("accelerator"))
 
 
 def mark_checkpoint_complete(ckpt_dir: str) -> None:

@@ -83,6 +83,10 @@ class BaseTrainer:
         else:
             self.num_training_steps = self.args.num_train_epochs * len(self.train_batch_generator)
 
+        if self.args.save_epochs is not None:
+            steps_per_epoch = len(self.train_batch_generator)
+            self.args.save_steps = max(1, int(steps_per_epoch * self.args.save_epochs))
+
         if self.args.enable_activation_checkpointing:
             self.model.gradient_checkpointing_enable({"use_reentrant": False})
 
@@ -112,6 +116,12 @@ class BaseTrainer:
         self._resume_epoch = 0
         if self.args.resume_from_checkpoint:
             self._resume_from_checkpoint(self.args.resume_from_checkpoint)
+
+        if self.args.save_ckpt_as_hf:
+            logger.warning_rank0(
+                "save_ckpt_as_hf is enabled. Intermediate checkpoints will be saved in Hugging Face format. "
+                "Note that this will significantly increase memory consumption during saving."
+            )
 
     @property
     def _dist_name(self) -> str | None:
@@ -197,19 +207,27 @@ class BaseTrainer:
                 num_training_steps=self.num_training_steps,
             )
 
-        if self._dist_name == "fsdp2":
-            self._save_fsdp2_states(ckpt_dir)
-        elif self._dist_name == "deepspeed":
-            self._deepspeed_engine.accelerator.save_state(ckpt_dir)
+        if self._dist_name in ("fsdp2", "deepspeed"):
+            from ..plugins.trainer_plugins.distributed.hub import DistributedPlugin
+
+            DistributedPlugin(self._dist_name).save_checkpoint(
+                self.model,
+                self.optimizer,
+                ckpt_dir,
+                save_ckpt_as_hf=self.args.save_ckpt_as_hf,
+                processor=self.renderer.processor,
+            )
         else:
             self._save_standard_states(ckpt_dir)
 
         if self._dist_name != "deepspeed" and rank == 0:
             torch.save(self.lr_scheduler.state_dict(), os.path.join(ckpt_dir, "scheduler.pt"))
 
+        dl_dir = os.path.join(ckpt_dir, "dataloader")
+        os.makedirs(dl_dir, exist_ok=True)
         torch.save(
             self.train_batch_generator.state_dict(),
-            os.path.join(ckpt_dir, f"dataloader_{rank}.pt"),
+            os.path.join(dl_dir, f"rank_{rank}.pt"),
         )
 
         if self._dist_name != "deepspeed":
@@ -224,23 +242,6 @@ class BaseTrainer:
 
         logger.info_rank0(f"Checkpoint saved to {ckpt_dir}")
 
-    def _save_fsdp2_states(self, ckpt_dir: str) -> None:
-        """Save model and optimizer via Distributed Checkpoint (FSDP2)."""
-        import torch.distributed.checkpoint as dcp
-        from torch.distributed.checkpoint.state_dict import (
-            StateDictOptions,
-            get_model_state_dict,
-            get_optimizer_state_dict,
-        )
-
-        options = StateDictOptions(full_state_dict=False, cpu_offload=True)
-
-        model_state = get_model_state_dict(self.model, options=options)
-        dcp.save(state_dict=model_state, checkpoint_id=os.path.join(ckpt_dir, "model"))
-
-        optim_state = get_optimizer_state_dict(self.model, self.optimizer, options=options)
-        dcp.save(state_dict=optim_state, checkpoint_id=os.path.join(ckpt_dir, "optimizer"))
-
     def _save_standard_states(self, ckpt_dir: str) -> None:
         """Save model and optimizer for DDP / single-GPU via save_pretrained."""
         rank = DistributedInterface().get_rank()
@@ -252,6 +253,13 @@ class BaseTrainer:
 
             os.makedirs(os.path.join(ckpt_dir, "optimizer"), exist_ok=True)
             torch.save(self.optimizer.state_dict(), os.path.join(ckpt_dir, "optimizer", "state_dict.pt"))
+
+            if self.args.save_ckpt_as_hf:
+                # For standard states, "model" is already HF format, so we just copy/link it or
+                # tell the user it's already in HF format. To be consistent with the directory structure
+                # of FSDP2/DeepSpeed, we can create a symlink or just save it again to hf_model.
+                # To save disk space, we just log that it's already HF format.
+                logger.info("Standard saving already uses HF format. No additional 'hf_model' directory created.")
 
     def _resume_from_checkpoint(self, ckpt_path: str) -> None:
         """Restore full training state from a checkpoint directory."""
@@ -268,10 +276,15 @@ class BaseTrainer:
         self.global_step = metadata["global_step"]
         self._resume_epoch = metadata["epoch"]
 
-        if self._dist_name == "fsdp2":
-            self._load_fsdp2_states(ckpt_dir)
-        elif self._dist_name == "deepspeed":
-            self._deepspeed_engine.accelerator.load_state(ckpt_dir)
+        if self._dist_name in ("fsdp2", "deepspeed"):
+            from ..plugins.trainer_plugins.distributed.hub import DistributedPlugin
+
+            DistributedPlugin(self._dist_name).load_checkpoint(
+                self.model,
+                self.optimizer,
+                ckpt_dir,
+                processor=self.renderer.processor,
+            )
         else:
             self._load_standard_states(ckpt_dir)
 
@@ -280,37 +293,19 @@ class BaseTrainer:
             if os.path.exists(sched_path):
                 self.lr_scheduler.load_state_dict(torch.load(sched_path, map_location="cpu", weights_only=True))
 
-        dl_path = os.path.join(ckpt_dir, f"dataloader_{rank}.pt")
+        dl_path = os.path.join(ckpt_dir, "dataloader", f"rank_{rank}.pt")
+
         if os.path.exists(dl_path):
             self.train_batch_generator.load_state_dict(torch.load(dl_path, map_location="cpu", weights_only=False))
+        else:
+            logger.warning_rank0(
+                f"Dataloader state file not found at {dl_path}. Skipping Dataloader state restoration."
+            )
 
         if self._dist_name != "deepspeed":
             load_rng_state(ckpt_dir, rank)
 
         logger.info_rank0(f"Resumed from checkpoint: step={self.global_step}, epoch={self._resume_epoch}")
-
-    def _load_fsdp2_states(self, ckpt_dir: str) -> None:
-        """Load model and optimizer from Distributed Checkpoint (FSDP2)."""
-        import torch.distributed.checkpoint as dcp
-        from torch.distributed.checkpoint.state_dict import (
-            StateDictOptions,
-            get_model_state_dict,
-            get_optimizer_state_dict,
-            set_model_state_dict,
-            set_optimizer_state_dict,
-        )
-
-        options = StateDictOptions(full_state_dict=False, cpu_offload=True)
-
-        ckpt_model_dir = os.path.join(ckpt_dir, "model")
-        model_state = get_model_state_dict(self.model, options=options)
-        dcp.load(state_dict=model_state, checkpoint_id=ckpt_model_dir)
-        set_model_state_dict(self.model, model_state, options=options)
-
-        ckpt_optim_dir = os.path.join(ckpt_dir, "optimizer")
-        optim_state = get_optimizer_state_dict(self.model, self.optimizer, options=options)
-        dcp.load(state_dict=optim_state, checkpoint_id=ckpt_optim_dir)
-        set_optimizer_state_dict(self.model, self.optimizer, optim_state, options=options)
 
     def _load_standard_states(self, ckpt_dir: str) -> None:
         """Load model and optimizer for DDP / single-GPU."""
@@ -422,11 +417,6 @@ class BaseTrainer:
                 if self.global_step >= self.num_training_steps:
                     logger.info_rank0(f"Reached max_steps ({self.num_training_steps}), stopping training.")
                     return
-
-            if self.args.save_on_epoch_end:
-                already_saved = self.args.save_steps and self.global_step % self.args.save_steps == 0
-                if not already_saved:
-                    self._save_checkpoint(epoch)
 
     def save_model(self) -> None:
         """Save the model."""
