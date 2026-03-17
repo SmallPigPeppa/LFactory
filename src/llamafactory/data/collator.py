@@ -406,6 +406,7 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
             else:
                 if is_omni:
                     raise RuntimeError("Omni models are not supported for packed sequences for now.")
+
                 self._compute_rope_position_ids_with_packing(
                     features,
                     mm_inputs,
@@ -414,7 +415,6 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
                     batch_vidlens,
                     batch_audlens,
                     has_dummy_image,
-                    len(fake_input_ids),
                 )
 
             # For transformers compatibility, after https://github.com/huggingface/transformers/issues/39400
