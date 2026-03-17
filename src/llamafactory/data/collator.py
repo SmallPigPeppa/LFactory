@@ -381,8 +381,6 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
                 feature["token_type_ids"] = token_type_ids[i]
 
         features: dict[str, torch.Tensor] = super().__call__(features)
-        if has_dummy_image: # too tricky, need to be refactored
-            features["has_dummy_image"] = True
 
         bsz, seq_len = features["input_ids"].shape[:2]
         model_type = getattr(self.model.config, "model_type", None) if self.model is not None else None
@@ -398,6 +396,10 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
                 p.get("sequence_boundaries") if p is not None else None for p in packing_params_list
             ]
             has_packing = any(b is not None and len(b) > 2 for b in boundaries_list)
+            if has_dummy_image and has_packing:
+                # FIXME: too tricky, need to be refactored
+                features["has_dummy_image"] = True
+
             # When fake image/audio was injected, sequence_boundaries no longer match the tensor; use non-packing path.
             if not has_packing:
                 self._compute_rope_position_ids(features, mm_inputs)
