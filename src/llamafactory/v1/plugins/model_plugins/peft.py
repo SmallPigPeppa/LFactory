@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import re
+import shutil
+import tempfile
 from typing import Literal, TypedDict, Union
 
 import torch
 from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+from safetensors.torch import load_file as safe_load_file, save_file as safe_save_file
 
 from ...config import InputArgument, get_args
 from ...core.model_engine import ModelEngine
@@ -26,6 +30,125 @@ from ...utils.types import HFModel
 
 
 logger = logging.get_logger(__name__)
+
+
+def _get_adapter_state_dict_with_key_fix(adapter_path: str, model: HFModel) -> dict[str, torch.Tensor]:
+    """Load adapter state dict and fix key mismatches for composite models.
+
+    When adapters are trained on composite models (e.g., Qwen3.5) that have a 'language_model'
+    wrapper, the saved adapter keys include 'language_model' in their path. However, when
+    loading these adapters onto a base model that doesn't have this wrapper (e.g., when using
+    AutoModelForCausalLM directly), the keys don't match.
+
+    This function detects such mismatches and transforms the keys accordingly.
+    """
+    from peft.utils import SAFETENSORS_WEIGHTS_NAME, WEIGHTS_NAME
+    from ....model.model_utils.visual import COMPOSITE_MODELS
+
+    # Determine which weights file to load
+    if os.path.exists(os.path.join(adapter_path, SAFETENSORS_WEIGHTS_NAME)):
+        weights_path = os.path.join(adapter_path, SAFETENSORS_WEIGHTS_NAME)
+        state_dict = safe_load_file(weights_path)
+    elif os.path.exists(os.path.join(adapter_path, WEIGHTS_NAME)):
+        weights_path = os.path.join(adapter_path, WEIGHTS_NAME)
+        state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+    else:
+        return {}  # Let PEFT handle the error
+
+    model_type = getattr(model.config, "model_type", None)
+
+    # Check if this is a composite model with language_model wrapper
+    if model_type in COMPOSITE_MODELS:
+        language_model_keys = COMPOSITE_MODELS[model_type].language_model_keys
+        if "language_model" in language_model_keys:
+            # The model expects 'language_model' in the keys
+            # Check if adapter was trained without it (rare case)
+            needs_language_model_prefix = False
+            for key in state_dict.keys():
+                if ".model.layers." in key and ".model.language_model." not in key:
+                    # Adapter was trained without language_model wrapper but model has it
+                    needs_language_model_prefix = True
+                    break
+
+            if needs_language_model_prefix:
+                # Transform keys to add language_model prefix
+                new_state_dict = {}
+                for key, value in state_dict.items():
+                    # Replace 'base_model.model.model.layers.' with 'base_model.model.model.language_model.layers.'
+                    new_key = key.replace("base_model.model.model.layers.", "base_model.model.model.language_model.layers.")
+                    new_state_dict[new_key] = value
+                return new_state_dict
+    else:
+        # Model is not a composite model (e.g., loaded via AutoModelForCausalLM directly)
+        # Check if adapter has language_model keys that need to be stripped
+        needs_language_model_strip = False
+        for key in state_dict.keys():
+            if ".model.language_model." in key:
+                needs_language_model_strip = True
+                break
+
+        if needs_language_model_strip:
+            # Transform keys to remove language_model prefix
+            new_state_dict = {}
+            for key, value in state_dict.items():
+                # Replace 'base_model.model.model.language_model.layers.' with 'base_model.model.model.layers.'
+                new_key = key.replace("base_model.model.model.language_model.", "base_model.model.model.")
+                new_state_dict[new_key] = value
+            logger.info_rank0("Transformed adapter keys to match base model structure (removed 'language_model' prefix).")
+            return new_state_dict
+
+    return state_dict
+
+
+def _load_peft_model_with_key_fix(
+    model: HFModel,
+    adapter_path: str,
+    is_trainable: bool = False,
+    **kwargs
+) -> PeftModel:
+    """Load PEFT model with automatic key transformation for composite models.
+
+    This function wraps PeftModel.from_pretrained and handles key mismatches that occur
+    when loading adapters trained on composite models (e.g., Qwen3.5) onto base models
+    with different structures.
+    """
+    from peft import PeftConfig
+    from peft.utils import SAFETENSORS_WEIGHTS_NAME, WEIGHTS_NAME
+
+    # First, try standard loading
+    try:
+        return PeftModel.from_pretrained(model, adapter_path, is_trainable=is_trainable, **kwargs)
+    except (RuntimeError, ValueError) as e:
+        # If standard loading fails due to key mismatch, try with key fix
+        error_msg = str(e)
+        if "missing adapter keys" in error_msg.lower() or "unexpected adapter keys" in error_msg.lower():
+            logger.warning_rank0("Adapter key mismatch detected. Attempting to fix keys...")
+
+            # Load the fixed state dict
+            fixed_state_dict = _get_adapter_state_dict_with_key_fix(adapter_path, model)
+
+            # Create a temporary file with fixed keys
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                # Copy adapter config
+                peft_config = PeftConfig.from_pretrained(adapter_path)
+                peft_config.save_pretrained(tmp_dir)
+
+                # Save fixed state dict
+                if os.path.exists(os.path.join(adapter_path, SAFETENSORS_WEIGHTS_NAME)):
+                    safe_save_file(fixed_state_dict, os.path.join(tmp_dir, SAFETENSORS_WEIGHTS_NAME))
+                else:
+                    torch.save(fixed_state_dict, os.path.join(tmp_dir, WEIGHTS_NAME))
+
+                # Copy other necessary files
+                for fname in ["adapter_config.json", "README.md"]:
+                    src = os.path.join(adapter_path, fname)
+                    if os.path.exists(src):
+                        shutil.copy(src, os.path.join(tmp_dir, fname))
+
+                # Load from temporary directory
+                return PeftModel.from_pretrained(model, tmp_dir, is_trainable=is_trainable, **kwargs)
+        else:
+            raise
 
 
 class LoraConfigDict(TypedDict, total=False):
@@ -96,7 +219,7 @@ def merge_adapters(model: HFModel, adapter_name_or_path: Union[list[str], str]) 
         adapter_name_or_path = [adapter_name_or_path]
 
     for adapter_path in adapter_name_or_path:
-        model = PeftModel.from_pretrained(model, adapter_path)
+        model = _load_peft_model_with_key_fix(model, adapter_path)
         model = model.merge_and_unload()
         logger.info_rank0(f"Merged adapter from {adapter_path}")
 
@@ -136,7 +259,7 @@ def load_adapter(model: HFModel, adapter_name_or_path: Union[list[str], str], is
         model = merge_adapters(model, adapter_to_merge)
 
     if adapter_to_resume is not None:
-        model = PeftModel.from_pretrained(model, adapter_to_resume, is_trainable=is_train)
+        model = _load_peft_model_with_key_fix(model, adapter_to_resume, is_trainable=is_train)
         if is_train:
             logger.info_rank0(
                 f"Resuming training from existing LoRA adapter at {adapter_to_resume}. "
