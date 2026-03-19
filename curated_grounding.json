@@ -1,0 +1,251 @@
+[
+  {
+    "id": "win_update_0x80073712",
+    "error_codes": ["0x80073712", "0x00003712"],
+    "priority": 100,
+    "title": "Windows Update component store corruption",
+    "facts": [
+      "0x80073712 maps to component store corruption (ERROR_SXS_COMPONENT_STORE_CORRUPT), not a simple disk-space error.",
+      "First-line remediation usually includes DISM /RestoreHealth and SFC /scannow, then retrying the update.",
+      "Relevant checks include CBS.log, DISM output, and WindowsUpdateClient operational logs."
+    ]
+  },
+  {
+    "id": "intune_enrollment_80180014",
+    "error_codes": ["0x80180014", "80180014"],
+    "priority": 95,
+    "title": "Intune enrollment device limit",
+    "facts": [
+      "Treat 80180014 as an enrollment/device-limit style failure first, not as an Azure AD join corruption issue.",
+      "Verify the user's device enrollment limit in Intune or Entra ID and check whether the user already has too many enrolled devices.",
+      "Also verify enrollment restrictions, licensing, and whether stale device records should be retired or deleted."
+    ]
+  },
+  {
+    "id": "win32_timeout_0x87d1041c",
+    "error_codes": ["0x87d1041c"],
+    "priority": 90,
+    "title": "Win32 app install timeout",
+    "facts": [
+      "Treat 0x87D1041C as a Win32 app timeout/detection flow problem first, not as an appxbundle signature problem.",
+      "Check Intune Management Extension service health, IME logs under ProgramData, install command duration, and detection rules.",
+      "Verify that the install command can complete silently within the assignment timeout window."
+    ]
+  },
+  {
+    "id": "autopilot_timeout_0x800705b4",
+    "error_codes": ["0x800705b4"],
+    "priority": 90,
+    "title": "Autopilot timeout",
+    "facts": [
+      "0x800705B4 is a timeout pattern; in Autopilot app-install scenarios, inspect ESP timing, required app assignments, and network reachability.",
+      "Check Enrollment Status Page phase, app install progress, IME logs, and whether a required app or script is blocking completion."
+    ]
+  },
+  {
+    "id": "compliance_bitlocker_70005",
+    "error_codes": ["0x80070005", "0x00000005"],
+    "keywords": ["bitlocker", "compliance"],
+    "priority": 96,
+    "title": "BitLocker compliance access-denied reporting path",
+    "facts": [
+      "For a BitLocker compliance case with 0x80070005, treat it as an access-denied or reporting-permission problem before assuming BitLocker is disabled or TPM is missing.",
+      "Verify the device can report BitLocker state back to Intune, including MDM policy application, WMI or CSP access, and whether local security policy or another agent is blocking the reporting path.",
+      "If BitLocker is already enabled and TPM is healthy, check event logs and MDM diagnostics for access-denied failures tied to inventory, compliance evaluation, or state refresh."
+    ]
+  },
+  {
+    "id": "access_denied_0x80070005",
+    "error_codes": ["0x80070005", "0x00000005"],
+    "priority": 85,
+    "title": "Access denied / permission issue",
+    "facts": [
+      "0x80070005 maps to access denied / permissions failure.",
+      "In Intune or BitLocker scenarios, verify effective permissions, policy conflicts, service context, and whether the device can report required state back to management."
+    ]
+  },
+  {
+    "id": "conditional_access_compliant_but_blocked",
+    "keywords": ["conditional access", "compliant", "sharepoint", "blocked"],
+    "priority": 80,
+    "title": "Conditional Access end-to-end validation",
+    "facts": [
+      "When a device is compliant but access is still blocked, validate the sign-in log result in Entra ID, the exact Conditional Access policy hit, and the device ID/compliance claim presented at sign-in.",
+      "Check for other policy conditions such as app protection, sign-in frequency, location, authentication strength, guest restrictions, or browser/app requirements."
+    ]
+  },
+  {
+    "id": "wufb_wsus_conflict",
+    "keywords": ["wsus", "windows update for business", "wufb", "update scans are failing"],
+    "priority": 80,
+    "title": "WSUS and WUfB conflict",
+    "facts": [
+      "Do not manage the same Windows client with both WSUS scan-source settings and Windows Update for Business policies unless intentionally configured.",
+      "Check scan source policy, Windows Update for Business rings, registry policy state, and WindowsUpdateClient logs to confirm which service the client is trying to use."
+    ]
+  },
+  {
+    "id": "ime_service_startup",
+    "keywords": ["intune management extension", "service is not starting", "ime"],
+    "priority": 80,
+    "title": "Intune Management Extension startup checks",
+    "facts": [
+      "For IME startup failures, check the Intune Management Extension Windows service, its service account/context, and IME logs under ProgramData.",
+      "Relevant local checks include Services, Event Viewer Application/System logs, and file/folder permissions under ProgramData\\Microsoft\\IntuneManagementExtension."
+    ]
+  },
+  {
+    "id": "win_update_0x800f0922",
+    "error_codes": ["0x800f0922"],
+    "priority": 92,
+    "title": "Windows Update servicing or reserved-partition failure",
+    "facts": [
+      "0x800F0922 commonly points to a servicing failure reaching protected resources or to an undersized System Reserved/EFI partition, not to generic driver corruption alone.",
+      "Check CBS.log and setup/update logs, confirm VPN/proxy connectivity is not interfering, and verify the system reserved partition has sufficient free space.",
+      "If the device is using enterprise network controls, retry off VPN and confirm required Microsoft update endpoints are reachable."
+    ]
+  },
+  {
+    "id": "win_update_0x80244010",
+    "error_codes": ["0x80244010"],
+    "priority": 90,
+    "title": "Windows Update scan throttling or WSUS query pressure",
+    "facts": [
+      "0x80244010 is a scan/request limit style failure often seen when a WSUS server or upstream update source is overloaded or returning too many range/request responses.",
+      "Check whether many clients are scanning at once, inspect WindowsUpdate.log or WindowsUpdateClient operational logs, and review WSUS software update point health if WSUS is in use.",
+      "If WUfB and WSUS settings are mixed, resolve the scan-source conflict first before deeper remediation."
+    ]
+  },
+  {
+    "id": "win_update_0x80070002",
+    "error_codes": ["0x80070002", "0x00000002"],
+    "priority": 88,
+    "title": "Windows Update missing file or payload reference",
+    "facts": [
+      "0x80070002 maps to file not found and usually indicates missing update payload files, stale SoftwareDistribution state, or broken content references rather than pure access denial.",
+      "Check WindowsUpdateClient logs, Delivery Optimization state, and whether update content was partially downloaded or cleaned up prematurely.",
+      "A common first-line path is to stop update services, clear or rename SoftwareDistribution and Catroot2 caches, then rescan."
+    ]
+  },
+  {
+    "id": "win_update_0xc0000034",
+    "error_codes": ["0xc0000034"],
+    "priority": 90,
+    "title": "Boot configuration or servicing rollback after restart",
+    "facts": [
+      "0xC0000034 after an update restart is a boot configuration or servicing-stage failure pattern, not a normal post-reboot delay.",
+      "Check setupact.log, setuperr.log, CBS.log, and boot status data to see whether the rollback was triggered by BCD, language pack, or servicing corruption issues.",
+      "If the issue is widespread on one model or firmware level, compare BIOS/UEFI, storage controller, and disk encryption posture across affected devices."
+    ]
+  },
+  {
+    "id": "msi_1603_install_failure",
+    "error_codes": ["1603", "0x00000643"],
+    "priority": 89,
+    "title": "MSI fatal install failure",
+    "facts": [
+      "MSI 1603 is a generic fatal installation failure and usually needs the MSI verbose log to identify the real blocker.",
+      "Check whether the app is already installed, whether prerequisites are missing, whether the install is running in the wrong context, and whether a reboot is pending.",
+      "In Intune, validate the exact install command, return code mapping, detection rules, and whether the installer succeeds silently under SYSTEM."
+    ]
+  },
+  {
+    "id": "win32_detection_rule_false_negative",
+    "keywords": ["win32 app", "detection rule", "installed"],
+    "priority": 86,
+    "title": "Win32 detection rule mismatch",
+    "facts": [
+      "When the installer succeeds but Intune still reports failure, treat detection logic as the primary suspect before repackaging the app.",
+      "Validate whether the detection rule matches the install context: machine vs user, 32-bit vs 64-bit registry path, file version, MSI product code, or script return value.",
+      "Confirm the app really lands at the expected path under SYSTEM and review IntuneManagementExtension logs for detection evaluation details."
+    ]
+  },
+  {
+    "id": "m365_apps_downloading_status",
+    "keywords": ["microsoft 365 apps", "downloading", "company portal"],
+    "priority": 84,
+    "title": "Microsoft 365 Apps stuck downloading in Company Portal",
+    "facts": [
+      "If Microsoft 365 Apps is stuck at downloading, check Delivery Optimization, Office CDN reachability, proxy/TLS inspection behavior, and Intune Management Extension logs before changing assignment logic.",
+      "Verify whether the device can reach Office content endpoints and whether the deployment is blocked by another Office installation or pending reboot.",
+      "If content download is the bottleneck, compare behavior on and off corporate network or VPN."
+    ]
+  },
+  {
+    "id": "msix_certificate_trust_error",
+    "keywords": ["msix", "certificate", "trust", "install"],
+    "priority": 84,
+    "title": "MSIX certificate trust failure",
+    "facts": [
+      "MSIX certificate trust errors usually mean the signing certificate chain is not trusted on the target device, not that the package itself is necessarily malformed.",
+      "Verify that the signing certificate and required intermediates are present in the correct machine certificate stores and that the package signature timestamp is valid.",
+      "If sideloading is controlled by policy, confirm the device is allowed to install trusted line-of-business packages."
+    ]
+  },
+  {
+    "id": "conditional_access_unmanaged_device",
+    "keywords": ["conditional access", "teams", "unmanaged", "device"],
+    "priority": 85,
+    "title": "Conditional Access blocking unmanaged device access",
+    "facts": [
+      "If a user is blocked on an unmanaged device, verify whether the policy explicitly requires a compliant or hybrid-joined device rather than assuming MFA failure.",
+      "Check the Entra sign-in log for the exact policy result, client app, resource, and grant controls that were enforced.",
+      "If access is intended from personal devices, review whether app protection, approved client app, or browser session controls should be used instead of a hard compliant-device requirement."
+    ]
+  },
+  {
+    "id": "conditional_access_named_location_vpn",
+    "keywords": ["named locations", "vpn", "conditional access"],
+    "priority": 82,
+    "title": "Conditional Access named location mismatch for VPN users",
+    "facts": [
+      "Named location exclusions often fail because the sign-in originates from the VPN egress IP or a cloud security proxy IP that is different from the office public range admins expect.",
+      "Use Entra sign-in logs to confirm the actual source IP seen by Conditional Access and compare it to the named location definition.",
+      "If users roam between VPN and direct internet access, evaluate whether trusted location logic is still appropriate for the policy."
+    ]
+  },
+  {
+    "id": "enrollment_mfa_loop",
+    "keywords": ["enrollment", "mfa", "loop"],
+    "priority": 88,
+    "title": "Enrollment blocked by MFA or authentication loop",
+    "facts": [
+      "An MFA loop during enrollment usually points to Conditional Access, device registration state, or legacy webview/authentication handoff problems rather than the MDM connector itself.",
+      "Check Entra sign-in logs, the exact app/resource requesting MFA, broker components such as Web Account Manager or Company Portal, and whether the device clock and browser session are healthy.",
+      "Also verify that enrollment is not being interrupted by policies that require a compliant device before the device can finish becoming compliant."
+    ]
+  },
+  {
+    "id": "enrollment_stuck_setting_up_device",
+    "keywords": ["setting up your device for work", "enrollment"],
+    "priority": 86,
+    "title": "Enrollment stuck at setting up your device for work",
+    "facts": [
+      "When enrollment stalls at 'Setting up your device for work', inspect enrollment status, MDM diagnostics, Company Portal logs, and network reachability before treating it as a generic Windows profile issue.",
+      "Check whether device registration completed, whether the MDM enrollment task exists, and whether required enrollment apps or policies are blocking progress.",
+      "Event Viewer logs under DeviceManagement-Enterprise-Diagnostics-Provider are usually more useful here than broad system troubleshooting."
+    ]
+  },
+  {
+    "id": "bitlocker_compliance_tpm_firmware",
+    "keywords": ["tpm firmware", "bitlocker", "compliance"],
+    "priority": 86,
+    "title": "TPM firmware issue affecting BitLocker compliance",
+    "facts": [
+      "If BitLocker compliance breaks around a TPM firmware update, verify TPM readiness, PCR behavior, and whether protector state changed after the firmware event.",
+      "Check TPM status with Get-Tpm, review BitLocker protectors with Get-BitLockerVolume, and inspect BitLocker API or TPM-WMI event logs.",
+      "If the update was vendor-driven, compare firmware versions across affected devices and confirm whether a suspend-resume BitLocker cycle is recommended by the OEM."
+    ]
+  },
+  {
+    "id": "firewall_enabled_but_noncompliant",
+    "keywords": ["firewall", "enabled", "compliance"],
+    "priority": 82,
+    "title": "Firewall appears enabled but compliance still fails",
+    "facts": [
+      "If compliance says firewall is off while Windows Firewall appears enabled, verify which profile state Intune is evaluating and whether another security product owns the firewall provider state.",
+      "Check Microsoft Defender for Endpoint or third-party security integrations, local firewall profile status, and MDM diagnostic reports for stale reporting.",
+      "Treat this as a reporting or policy interpretation problem first, not as proof that the firewall service is stopped."
+    ]
+  }
+]
