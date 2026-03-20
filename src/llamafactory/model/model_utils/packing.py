@@ -115,4 +115,4 @@ def configure_packing(model_args: "ModelArguments", is_trainable: bool) -> None:
     import transformers.modeling_flash_attention_utils
     if not is_transformers_version_greater_than("4.53.0"):
         transformers.modeling_flash_attention_utils._get_unpad_data = get_unpad_data
-        logger.info_rank0("Using block diagonal attention for sequence packing without cross-attention when transformers<4.53.0.")
+        logger.info_rank0("Using block diagonal attention for sequence packing without cross-attention when transformers < 4.53.0.")

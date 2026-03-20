@@ -27,7 +27,7 @@ from peft import PeftModel
 from transformers import DataCollatorForSeq2Seq
 
 from ..extras.constants import AUDIO_PLACEHOLDER, IGNORE_INDEX, IMAGE_PLACEHOLDER, MROPE_MODELS
-from ..extras.packages import is_pillow_available, is_transformers_version_greater_than
+from ..extras.packages import is_pillow_available
 
 
 if is_pillow_available():
@@ -455,6 +455,12 @@ class SFTDataCollatorWith4DAttentionMask(MultiModalDataCollatorForSeq2Seq):
     compute_dtype: "torch.dtype" = torch.float32
     neat_packing: bool = False
 
+    def __post_init__(self):
+        super().__post_init__()
+        if self.neat_packing and self.attn_implementation == "flash_attention_2":
+            if self.model is not None and getattr(self.model.config, "model_type", None) in ["qwen3_5", "qwen3_5_moe", "gpt_oss"]:
+                raise ValueError("Neat packing is not supported for qwen3_5, qwen3_5_moe, gpt_oss models for now.")
+
     @staticmethod
     def _unpad_packed_features(features: dict[str, Any]) -> None:
         r"""Trim padded positions for packed FA2 batches."""
@@ -485,12 +491,12 @@ class SFTDataCollatorWith4DAttentionMask(MultiModalDataCollatorForSeq2Seq):
         if self.block_diag_attn and self.attn_implementation != "flash_attention_2":
             features["attention_mask"] = prepare_4d_attention_mask(features["attention_mask"], self.compute_dtype)
 
-        if self.neat_packing and self.attn_implementation == "flash_attention_2":
-            if is_transformers_version_greater_than("4.53.0"):
-                assert features["input_ids"].shape[0] == 1, "bsz should be 1 for neat packing"
-                if not has_dummy_image:
-                    self._unpad_packed_features(features)
-                features["attention_mask"] = None  # let transformers handle causal packed mask.
+        if self.neat_packing and self.attn_implementation == "flash_attention_2": # FIXME compatibility fa3/fa4
+            assert features["input_ids"].shape[0] == 1, "bsz should be 1 for neat packing"
+            if not has_dummy_image:
+                self._unpad_packed_features(features)
+
+            features["attention_mask"] = None  # let transformers handle causal packed mask.
 
         for key, value in features.items():  # cast data dtype for paligemma
             if torch.is_tensor(value) and torch.is_floating_point(value):
