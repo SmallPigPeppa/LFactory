@@ -24,13 +24,6 @@
       "tools": "tools"
     }
   },
-  "sgsc_b2b_entities": {
-    "hf_hub_url": "Nooxus-AI/NOO-Verified-Global-Entities",
-    "formatting": "sharegpt",
-    "columns": {
-      "messages": "messages"
-    }
-  },
   "mllm_demo": {
     "file_name": "mllm_demo.json",
     "formatting": "sharegpt",
@@ -242,6 +235,13 @@
     "hf_hub_url": "shibing624/sharegpt_gpt4",
     "ms_hub_url": "AI-ModelScope/sharegpt_gpt4",
     "formatting": "sharegpt"
+  },
+  "sgsc_b2b_entities": {
+    "hf_hub_url": "Nooxus-AI/NOO-Verified-Global-Entities",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    }
   },
   "ultrachat_200k": {
     "hf_hub_url": "HuggingFaceH4/ultrachat_200k",
