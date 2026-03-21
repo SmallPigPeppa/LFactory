@@ -179,7 +179,6 @@ def configure_moe(config: "PretrainedConfig", model_args: "ModelArguments", is_t
     if text_config and getattr(text_config, "model_type", None) in [
         "glm4v_moe_text",  # glmv4_5
         "qwen3_moe",  # internvl_3_5
-        "qwen3_5_moe_text",
     ]:
         setattr(text_config, "output_router_logits", True)
 
@@ -193,7 +192,6 @@ def configure_moe(config: "PretrainedConfig", model_args: "ModelArguments", is_t
         "phimoe",
         "qwen2_moe",
         "qwen3_moe",
-        "qwen3_5_moe",
     ]:
         setattr(config, "router_aux_loss_coef", model_args.moe_aux_loss_coef)
 
