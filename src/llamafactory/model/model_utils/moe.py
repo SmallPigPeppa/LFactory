@@ -132,6 +132,11 @@ def add_z3_leaf_module(model: "PreTrainedModel") -> None:
 
         _set_z3_leaf_modules(model, [Qwen3MoeSparseMoeBlock])
 
+    if model_type == "qwen3_5_moe" or text_model_type == "qwen3_5_moe_text":
+        from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeSparseMoeBlock
+
+        _set_z3_leaf_modules(model, [Qwen3_5MoeSparseMoeBlock])
+
     if model_type == "qwen3_vl_moe":
         from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextSparseMoeBlock
 
@@ -173,6 +178,7 @@ def configure_moe(config: "PretrainedConfig", model_args: "ModelArguments", is_t
     if text_config and getattr(text_config, "model_type", None) in [
         "glm4v_moe_text",  # glmv4_5
         "qwen3_moe",  # internvl_3_5
+        "qwen3_5_moe_text",
     ]:
         setattr(text_config, "output_router_logits", True)
 
@@ -189,7 +195,7 @@ def configure_moe(config: "PretrainedConfig", model_args: "ModelArguments", is_t
     ]:
         setattr(config, "router_aux_loss_coef", model_args.moe_aux_loss_coef)
 
-    elif text_config and getattr(text_config, "model_type", None) in ["qwen3_moe"]:
+    elif text_config and getattr(text_config, "model_type", None) in ["qwen3_moe", "qwen3_5_moe_text"]:
         setattr(text_config, "router_aux_loss_coef", model_args.moe_aux_loss_coef)
 
     elif model_type == "deepseek":
