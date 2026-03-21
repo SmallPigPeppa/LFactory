@@ -179,6 +179,7 @@ def configure_moe(config: "PretrainedConfig", model_args: "ModelArguments", is_t
     if text_config and getattr(text_config, "model_type", None) in [
         "glm4v_moe_text",  # glmv4_5
         "qwen3_moe",  # internvl_3_5
+        "qwen3_5_moe_text",  # qwen3_5_moe
     ]:
         setattr(text_config, "output_router_logits", True)
 
