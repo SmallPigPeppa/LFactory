@@ -266,6 +266,7 @@ class FSDP2Engine:
             model.to_empty(device=device)
 
             # Scatter params from Rank 0 into all DTensor shards
+            # Broadcast the full state dict from the global rank-0 process to all ranks in this group.
             options = StateDictOptions(full_state_dict=True, cpu_offload=True, broadcast_from_rank0=True)
             set_model_state_dict(model, full_sd, options=options)
 
