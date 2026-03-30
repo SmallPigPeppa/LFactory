@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from typing import TYPE_CHECKING, Optional
+
+from transformers import DataCollatorForLanguageModeling
 
 from ...data import SFTDataCollatorWith4DAttentionMask, get_dataset, get_template_and_fix_tokenizer
 from ...extras.constants import IGNORE_INDEX
@@ -35,14 +38,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def run_sft(
-    model_args: "ModelArguments",
-    data_args: "DataArguments",
-    training_args: "Seq2SeqTrainingArguments",
-    finetuning_args: "FinetuningArguments",
-    generating_args: "GeneratingArguments",
-    callbacks: Optional[list["TrainerCallback"]] = None,
-):
+def _get_hp_components():
+    r"""Load the shared HyperParallel trainer backend used by both PT and SFT."""
     if not is_hyper_parallel_available():
         raise ImportError(
             "hyper_parallel is not installed. Please install it with `pip install hyper_parallel`."
@@ -52,6 +49,98 @@ def run_sft(
         HyperParallelArguments,
         HyperParallelTrainer,
     )
+
+    return HyperParallelArguments, HyperParallelTrainer
+
+
+def run_pt(
+    model_args: "ModelArguments",
+    data_args: "DataArguments",
+    training_args: "Seq2SeqTrainingArguments",
+    finetuning_args: "FinetuningArguments",
+    callbacks: Optional[list["TrainerCallback"]] = None,
+):
+    HyperParallelArguments, HyperParallelTrainer = _get_hp_components()
+
+    tokenizer_module = load_tokenizer(model_args)
+    tokenizer = tokenizer_module["tokenizer"]
+    template = get_template_and_fix_tokenizer(tokenizer, data_args)
+    dataset_module = get_dataset(template, model_args, data_args, training_args, stage="pt", **tokenizer_module)
+    model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    hp_args = HyperParallelArguments.from_finetuning_args(finetuning_args)
+    callbacks = list(callbacks or [])
+    processor = tokenizer_module.get("processor")
+    if processor is not None:
+        callbacks.append(SaveProcessorCallback(processor))
+
+    trainer = HyperParallelTrainer(
+        hp_args=hp_args,
+        model=model,
+        args=training_args,
+        finetuning_args=finetuning_args,
+        data_collator=data_collator,
+        callbacks=callbacks,
+        **dataset_module,
+        **tokenizer_module,
+    )
+
+    if finetuning_args.use_badam:
+        from badam import BAdamCallback, clip_grad_norm_old_version  # type: ignore[import]
+        from types import MethodType
+
+        trainer.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, trainer.accelerator)
+        trainer.add_callback(BAdamCallback)
+
+    if training_args.do_train:
+        train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
+        trainer.save_model()
+        trainer.log_metrics("train", train_result.metrics)
+        trainer.save_metrics("train", train_result.metrics)
+        trainer.save_state()
+        if trainer.is_world_process_zero() and finetuning_args.plot_loss:
+            keys = ["loss"]
+            if isinstance(dataset_module.get("eval_dataset"), dict):
+                keys += [f"eval_{key}_loss" for key in dataset_module["eval_dataset"].keys()]
+            else:
+                keys += ["eval_loss"]
+
+            plot_loss(training_args.output_dir, keys=keys)
+
+    if training_args.do_eval:
+        metrics = trainer.evaluate(metric_key_prefix="eval")
+
+        if isinstance(dataset_module.get("eval_dataset"), dict):
+            for key in dataset_module["eval_dataset"].keys():
+                try:
+                    perplexity = math.exp(metrics[f"eval_{key}_loss"])
+                except OverflowError:
+                    perplexity = float("inf")
+
+                metrics[f"eval_{key}_perplexity"] = perplexity
+        else:
+            try:
+                perplexity = math.exp(metrics["eval_loss"])
+            except OverflowError:
+                perplexity = float("inf")
+
+            metrics["eval_perplexity"] = perplexity
+
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+
+    create_modelcard_and_push(trainer, model_args, data_args, training_args, finetuning_args)
+
+
+def run_sft(
+    model_args: "ModelArguments",
+    data_args: "DataArguments",
+    training_args: "Seq2SeqTrainingArguments",
+    finetuning_args: "FinetuningArguments",
+    generating_args: "GeneratingArguments",
+    callbacks: Optional[list["TrainerCallback"]] = None,
+):
+    HyperParallelArguments, HyperParallelTrainer = _get_hp_components()
 
     tokenizer_module = load_tokenizer(model_args)
     tokenizer = tokenizer_module["tokenizer"]
