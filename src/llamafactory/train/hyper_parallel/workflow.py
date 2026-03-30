@@ -62,13 +62,18 @@ def run_pt(
 ):
     HyperParallelArguments, HyperParallelTrainer = _get_hp_components()
 
+    hp_args = HyperParallelArguments.from_finetuning_args(finetuning_args)
+    # When HP activation optimization is enabled, skip LlamaFactory native gradient
+    # checkpointing — HP will install its own via setup_activation_optimization().
+    if hp_args.activation_mode != "none":
+        model_args.disable_gradient_checkpointing = True
+
     tokenizer_module = load_tokenizer(model_args)
     tokenizer = tokenizer_module["tokenizer"]
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
     dataset_module = get_dataset(template, model_args, data_args, training_args, stage="pt", **tokenizer_module)
     model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    hp_args = HyperParallelArguments.from_finetuning_args(finetuning_args)
     callbacks = list(callbacks or [])
     processor = tokenizer_module.get("processor")
     if processor is not None:
@@ -142,6 +147,12 @@ def run_sft(
 ):
     HyperParallelArguments, HyperParallelTrainer = _get_hp_components()
 
+    hp_args = HyperParallelArguments.from_finetuning_args(finetuning_args)
+    # When HP activation optimization is enabled, skip LlamaFactory native gradient
+    # checkpointing — HP will install its own via setup_activation_optimization().
+    if hp_args.activation_mode != "none":
+        model_args.disable_gradient_checkpointing = True
+
     tokenizer_module = load_tokenizer(model_args)
     tokenizer = tokenizer_module["tokenizer"]
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
@@ -184,8 +195,6 @@ def run_sft(
     else:
         gen_kwargs["eos_token_id"] = [tokenizer.eos_token_id] + tokenizer.additional_special_tokens_ids
     gen_kwargs["pad_token_id"] = tokenizer.pad_token_id
-
-    hp_args = HyperParallelArguments.from_finetuning_args(finetuning_args)
 
     callbacks = list(callbacks or [])
     processor = tokenizer_module.get("processor")
