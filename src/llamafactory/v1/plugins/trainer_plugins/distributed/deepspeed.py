@@ -25,6 +25,7 @@ import torch
 from accelerate import Accelerator
 from accelerate.utils import DeepSpeedPlugin
 
+from ....utils.deepspeed_utils import infer_deepspeed_mixed_precision
 from ....utils.logging import get_logger
 from ....utils.types import HFModel, Processor
 
@@ -44,12 +45,19 @@ class DeepSpeedEngine:
     - ZeRO-3 parameter gathering for saving
     """
 
-    def __init__(self, dist_config: dict[str, Any], num_micro_batch: int = 1, micro_batch_size: int = 1):
+    def __init__(
+        self, dist_config: dict[str, Any], training_args=None, num_micro_batch: int = 1, micro_batch_size: int = 1
+    ):
         config_file = dist_config.get("config_file")
         if not config_file:
             raise ValueError("DeepSpeed config_file is required in dist_config")
 
         ds_plugin = DeepSpeedPlugin(hf_ds_config=config_file)
+        ds_plugin.set_mixed_precision(
+            infer_deepspeed_mixed_precision(
+                ds_plugin.deepspeed_config, bf16=bool(training_args and training_args.bf16)
+            )
+        )
 
         self.accelerator = Accelerator(
             deepspeed_plugin=ds_plugin,

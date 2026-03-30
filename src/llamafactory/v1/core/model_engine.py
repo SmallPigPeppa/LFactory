@@ -37,6 +37,7 @@ from ..accelerator.helper import DeviceType
 from ..accelerator.interface import DistributedInterface
 from ..config.model_args import ModelArguments, ModelClass
 from ..utils import logging
+from ..utils.deepspeed_utils import setup_deepspeed_zero3_model_loading, teardown_deepspeed_zero3_model_loading
 from ..utils.types import HFConfig, HFModel, Processor
 from .utils.rendering import Renderer
 
@@ -52,19 +53,39 @@ class ModelEngine:
         is_train: Whether to train the model.
     """
 
-    def __init__(self, model_args: ModelArguments, is_train: bool = False) -> None:
+    def __init__(
+        self,
+        model_args: ModelArguments,
+        training_args=None,
+        is_train: bool = False,
+    ) -> None:
         self.args = model_args
         """Model arguments."""
         self.is_train = is_train
         """Whether to train the model."""
+        self.training_args = training_args
+        """Training arguments used to control model-loading and training precision behavior."""
         self.processor = self._init_processor()
         """Tokenizer or multi-modal processor."""
         self.renderer = Renderer(self.args.template, self.processor)
         """Renderer."""
         self.model_config = self._init_model_config()
         """Model configuration."""
-        self.model = self._init_model()
-        """HF model."""
+        self._bf16_enabled = bool(self.is_train and self.training_args is not None and self.training_args.bf16)
+        self._deepspeed_zero3_plugin = None
+        self._deepspeed_zero3_enabled = False
+        try:
+            dist_config = self.training_args.dist_config if self.training_args is not None else None
+            self._deepspeed_zero3_plugin = setup_deepspeed_zero3_model_loading(
+                self.is_train, dist_config, bf16=self._bf16_enabled
+            )
+            self._deepspeed_zero3_enabled = self._deepspeed_zero3_plugin is not None
+            self.model = self._init_model()
+            """HF model."""
+        finally:
+            teardown_deepspeed_zero3_model_loading(self._deepspeed_zero3_plugin)
+            self._deepspeed_zero3_plugin = None
+            self._deepspeed_zero3_enabled = False
 
     def _init_processor(self) -> Processor:
         """Init processor.
@@ -97,7 +118,7 @@ class ModelEngine:
         else:
             init_device = DistributedInterface().current_device
 
-        init_kwargs = {"device_map": init_device}
+        init_kwargs = {} if self._deepspeed_zero3_enabled else {"device_map": init_device}
 
         if self.args.quant_config is not None:
             from ..plugins.model_plugins.quantization import QuantizationPlugin
@@ -143,7 +164,8 @@ class ModelEngine:
         if self.args.peft_config is None:
             if self.is_train:
                 logger.info_rank0("Fine-tuning mode: full tuning")
-                model = model.to(torch.float32)
+                target_dtype = torch.bfloat16 if self._bf16_enabled else torch.float32
+                model = model.to(target_dtype)
             else:
                 logger.info_rank0("Inference the original model")
         else:
