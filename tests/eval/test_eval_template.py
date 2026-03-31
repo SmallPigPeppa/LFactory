@@ -17,7 +17,7 @@ import pytest
 from llamafactory.eval.template import get_eval_template
 
 
-@pytest.mark.runs_on(["cpu"])
+@pytest.mark.runs_on(["cpu", "mps"])
 def test_eval_template_en():
     support_set = [
         {
@@ -55,7 +55,8 @@ def test_eval_template_en():
         {"role": "assistant", "content": "C"},
     ]
 
-@pytest.mark.runs_on(["cpu"])
+
+@pytest.mark.runs_on(["cpu", "mps"])
 def test_eval_template_zh():
     support_set = [
         {
