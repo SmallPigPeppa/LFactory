@@ -654,6 +654,7 @@ class Gemma4Plugin(BasePlugin):
     ) -> dict[str, Union[list[int], "torch.Tensor"]]:
         image_processor = getattr(processor, "image_processor", None)
         video_processor = getattr(processor, "video_processor", None)
+        feature_extractor = getattr(processor, "feature_extractor", None)
         mm_inputs = {}
 
         if len(images) != 0:
@@ -686,6 +687,20 @@ class Gemma4Plugin(BasePlugin):
                 )
             )
 
+        if len(audios) != 0: # only for gemma4n
+            audios = self._regularize_audios(
+                audios,
+                sampling_rate=getattr(processor, "audio_sampling_rate", 16000),
+            )["audios"]
+
+            mm_inputs.update(
+                feature_extractor(
+                audios,
+                padding="max_length",
+                return_tensors="pt",
+            )
+        )
+
         return mm_inputs
 
     @override
@@ -703,8 +718,11 @@ class Gemma4Plugin(BasePlugin):
 
         boi_token: str = getattr(processor, "boi_token")
         eoi_token: str = getattr(processor, "eoi_token")
+        boa_token: str = getattr(processor, "boa_token")
+        eoa_token: str = getattr(processor, "eoa_token")
         image_token: str = getattr(processor, "image_token")
         video_token: str = getattr(processor, "video_token")
+        audio_token: str = getattr(processor, "audio_token")
 
         if self.expand_mm_tokens:
             mm_inputs = self._get_mm_inputs(images, videos, audios, processor)
@@ -718,6 +736,7 @@ class Gemma4Plugin(BasePlugin):
             num_video_soft_tokens = [1] * len(videos)
             video_metadata = [None] * len(videos)
 
+        audio_iter = iter(audios)
         image_iter = iter(num_image_soft_tokens)
         video_iter = iter(zip(num_video_soft_tokens, video_metadata))
 
@@ -737,6 +756,16 @@ class Gemma4Plugin(BasePlugin):
                 else:
                     video_str = f"{boi_token}{video_token * num_soft_tokens_per_frame}{eoi_token}"
                 content = content.replace(VIDEO_PLACEHOLDER, video_str, 1)
+
+            while AUDIO_PLACEHOLDER in content:
+                current_audio = next(audio_iter)
+                if self.expand_mm_tokens:
+                    num_audio_tokens = processor._compute_audio_num_tokens(current_audio, processor.feature_extractor.sampling_rate)
+                    audio_str = f"{boa_token}{audio_token * num_audio_tokens}{eoa_token}"
+                else:
+                    audio_str = f"{boa_token}{audio_token}{eoa_token}"
+
+                content = content.replace(AUDIO_PLACEHOLDER, audio_str, 1)
 
             message["content"] = content
 
