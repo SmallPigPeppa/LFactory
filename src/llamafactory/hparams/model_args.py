@@ -141,7 +141,7 @@ class BaseModelArguments:
         default=False,
         metadata={"help": "Whether or not to enable huggingface/kernels for faster training and inference."},
     )
-    moe_aux_loss_coef: Optional[float] = field(
+    moe_aux_loss_coef: float | None = field(
         default=None,
         metadata={"help": "Coefficient of the auxiliary router loss in mixture-of-experts model."},
     )
