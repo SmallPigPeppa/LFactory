@@ -1,100 +1,195 @@
-"""Benchmark script to measure memory and speed impact of RM trainer optimizations.
+"""Benchmark: Memory and speed impact of RM trainer optimizations.
 
-Compares the original TRL forward (output_hidden_states=True + full lm_head)
-against the optimized forward (output_hidden_states=False + Identity lm_head).
+Runs two separate training processes (baseline vs optimized) and compares results.
 
 Usage:
-    python scripts/benchmark_rm_memory.py [--model MODEL] [--steps STEPS]
+    CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_rm_memory.py
+    CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_rm_memory.py --model Qwen/Qwen3-4B-Instruct-2507
 """
 
 import argparse
+import json
 import os
+import subprocess
 import sys
-import time
 
+
+def run_single_benchmark(mode: str, model: str, dataset: str, template: str,
+                         steps: int, batch_size: int, cutoff_len: int) -> dict:
+    """Run a single benchmark in a subprocess and return stats."""
+    output_dir = f"output/bench_rm_{mode}"
+    script = f"""
+import gc, json, os, sys, time
 import torch
+
+# Patch the trainer BEFORE importing run_exp
+if "{mode}" == "baseline":
+    import llamafactory.train.rm.trainer as rm_trainer
+
+    _OrigInit = rm_trainer.PairwiseTrainer.__init__
+
+    def _baseline_init(self, *args, **kwargs):
+        # Call original (which applies optimizations)
+        _OrigInit(self, *args, **kwargs)
+        # UNDO: restore TRL's default forward
+        from trl import AutoModelForCausalLMWithValueHead
+        self.model.forward = AutoModelForCausalLMWithValueHead.forward.__get__(
+            self.model, type(self.model)
+        )
+        # UNDO: restore lm_head (a fresh Linear layer with random weights — fine for benchmarking)
+        pretrained = self.model.pretrained_model
+        _owner = pretrained
+        if hasattr(pretrained, "base_model") and hasattr(pretrained.base_model, "model"):
+            _owner = pretrained.base_model.model
+        config = pretrained.config
+        _owner.lm_head = torch.nn.Linear(
+            config.hidden_size, config.vocab_size, bias=False
+        ).to(dtype=next(pretrained.parameters()).dtype,
+             device=next(pretrained.parameters()).device)
+
+    rm_trainer.PairwiseTrainer.__init__ = _baseline_init
+
+    _OrigLoss = rm_trainer.PairwiseTrainer.compute_loss
+
+    def _baseline_loss(self, model, inputs, return_outputs=False, **kwargs):
+        _, _, values = model(**inputs, output_hidden_states=True, return_dict=True, use_cache=False)
+        batch_size = inputs["input_ids"].size(0) // 2
+        chosen_masks, rejected_masks = torch.split(inputs["attention_mask"], batch_size, dim=0)
+        chosen_rewards, rejected_rewards = torch.split(values, batch_size, dim=0)
+        chosen_scores = chosen_rewards.gather(dim=-1, index=(chosen_masks.sum(dim=-1, keepdim=True) - 1))
+        rejected_scores = rejected_rewards.gather(dim=-1, index=(rejected_masks.sum(dim=-1, keepdim=True) - 1))
+        chosen_scores, rejected_scores = chosen_scores.squeeze(), rejected_scores.squeeze()
+        loss = -torch.nn.functional.logsigmoid(chosen_scores.float() - rejected_scores.float()).mean()
+        if return_outputs:
+            return loss, (loss, chosen_scores, rejected_scores)
+        return loss
+
+    rm_trainer.PairwiseTrainer.compute_loss = _baseline_loss
 
 from llamafactory.train.tuner import run_exp
 
+torch.cuda.reset_peak_memory_stats()
+torch.cuda.synchronize()
+start = time.perf_counter()
 
-DEMO_DATA = os.getenv("DEMO_DATA", "llamafactory/demo_data")
-DEFAULT_MODEL = os.getenv("TINY_LLAMA3", "llamafactory/tiny-random-Llama-3")
+run_exp({{
+    "stage": "rm",
+    "model_name_or_path": "{model}",
+    "do_train": True,
+    "finetuning_type": "lora",
+    "dataset": "{dataset}",
+    "template": "{template}",
+    "cutoff_len": {cutoff_len},
+    "overwrite_output_dir": True,
+    "per_device_train_batch_size": {batch_size},
+    "max_steps": {steps},
+    "bf16": True,
+    "report_to": "none",
+    "logging_steps": 1,
+    "save_steps": 999999,
+    "output_dir": "{output_dir}",
+}})
 
+torch.cuda.synchronize()
+elapsed = time.perf_counter() - start
+peak_mem = torch.cuda.max_memory_allocated() / 1024**3
 
-def run_benchmark(model_name: str, max_steps: int, output_dir: str) -> dict:
-    """Run RM training and collect memory/timing stats."""
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
-        torch.cuda.synchronize()
+stats = {{
+    "elapsed_sec": round(elapsed, 2),
+    "sec_per_step": round(elapsed / {steps}, 3),
+    "peak_memory_gib": round(peak_mem, 2),
+}}
+# Write stats to a file
+with open("{output_dir}/bench_stats.json", "w") as f:
+    json.dump(stats, f)
+print("BENCH_STATS:" + json.dumps(stats))
+"""
+    env = os.environ.copy()
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env, capture_output=True, text=True, timeout=1800,
+    )
 
-    start_time = time.perf_counter()
+    # Print subprocess output for visibility
+    if result.stdout:
+        for line in result.stdout.strip().split("\n")[-5:]:
+            print(f"  [{mode}] {line}")
+    if result.returncode != 0:
+        print(f"  [{mode}] STDERR (last 10 lines):")
+        for line in result.stderr.strip().split("\n")[-10:]:
+            print(f"  [{mode}]   {line}")
 
-    run_exp({
-        "stage": "rm",
-        "model_name_or_path": model_name,
-        "do_train": True,
-        "finetuning_type": "lora",
-        "dataset": "dpo_en_demo",
-        "dataset_dir": "REMOTE:" + DEMO_DATA,
-        "template": "llama3",
-        "cutoff_len": 128,
-        "overwrite_output_dir": True,
-        "per_device_train_batch_size": 2,
-        "max_steps": max_steps,
-        "report_to": "none",
-        "output_dir": output_dir,
-        "logging_steps": 1,
-        "save_steps": 999999,  # don't save checkpoints during benchmark
-    })
+    # Extract stats
+    for line in result.stdout.split("\n"):
+        if line.startswith("BENCH_STATS:"):
+            return json.loads(line[len("BENCH_STATS:"):])
 
-    elapsed = time.perf_counter() - start_time
+    # Fallback: try reading from file
+    stats_file = f"{output_dir}/bench_stats.json"
+    if os.path.exists(stats_file):
+        with open(stats_file) as f:
+            return json.loads(f.read())
 
-    stats = {
-        "elapsed_sec": round(elapsed, 2),
-        "steps_per_sec": round(max_steps / elapsed, 3),
-    }
-
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-        peak_mem_bytes = torch.cuda.max_memory_allocated()
-        stats["peak_memory_mb"] = round(peak_mem_bytes / 1024 / 1024, 1)
-
-    return stats
+    raise RuntimeError(f"{mode} benchmark failed. Exit code: {result.returncode}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Benchmark RM trainer memory and speed")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Model name or path")
-    parser.add_argument("--steps", type=int, default=5, help="Number of training steps")
+    parser = argparse.ArgumentParser(description="Benchmark RM trainer optimizations")
+    parser.add_argument("--model", default="Qwen/Qwen3-4B-Instruct-2507")
+    parser.add_argument("--dataset", default="ultrafeedback")
+    parser.add_argument("--template", default="qwen3")
+    parser.add_argument("--steps", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--cutoff-len", type=int, default=512)
     args = parser.parse_args()
 
-    print("=" * 60)
-    print("RM Trainer Benchmark")
-    print(f"Model: {args.model}")
-    print(f"Steps: {args.steps}")
-    print(f"CUDA available: {torch.cuda.is_available()}")
+    import torch
+    print("=" * 70)
+    print("RM Trainer Optimization Benchmark")
+    print("=" * 70)
+    print(f"Model:      {args.model}")
+    print(f"Dataset:    {args.dataset}")
+    print(f"Steps:      {args.steps}")
+    print(f"Batch size: {args.batch_size}")
+    print(f"Cutoff len: {args.cutoff_len}")
     if torch.cuda.is_available():
-        print(f"GPU: {torch.cuda.get_device_name()}")
-    print("=" * 60)
+        print(f"GPU:        {torch.cuda.get_device_name()}")
+        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"GPU Memory: {total:.1f} GiB")
+    print("=" * 70)
 
-    print("\n--- Running OPTIMIZED version (current code with Identity lm_head) ---")
-    optimized_stats = run_benchmark(
-        args.model, args.steps, os.path.join("output", "bench_rm_optimized")
+    # Run baseline
+    print("\n>>> BASELINE (output_hidden_states=True + full lm_head)")
+    baseline = run_single_benchmark(
+        "baseline", args.model, args.dataset, args.template,
+        args.steps, args.batch_size, args.cutoff_len,
     )
+    print(f"  Peak Memory: {baseline['peak_memory_gib']} GiB")
+    print(f"  Time/step:   {baseline['sec_per_step']}s")
 
-    print("\n--- Results ---")
-    print(f"  Time: {optimized_stats['elapsed_sec']}s ({optimized_stats['steps_per_sec']} steps/sec)")
-    if "peak_memory_mb" in optimized_stats:
-        print(f"  Peak GPU Memory: {optimized_stats['peak_memory_mb']} MB")
+    # Run optimized
+    print("\n>>> OPTIMIZED (Identity lm_head + EfficientValueHeadForward)")
+    optimized = run_single_benchmark(
+        "optimized", args.model, args.dataset, args.template,
+        args.steps, args.batch_size, args.cutoff_len,
+    )
+    print(f"  Peak Memory: {optimized['peak_memory_gib']} GiB")
+    print(f"  Time/step:   {optimized['sec_per_step']}s")
 
-    print("\n" + "=" * 60)
-    print("Note: The optimizations (Identity lm_head + output_hidden_states=False)")
-    print("are always enabled. To compare against the baseline, use a version of")
-    print("the code before this commit. Expected savings:")
-    print("  - ~6 GiB for 36-layer models (hidden state storage)")
-    print("  - Additional savings from skipping vocab projection (hidden_dim x vocab_size)")
-    print("  - Faster forward pass due to reduced memory allocation overhead")
-    print("=" * 60)
+    # Comparison
+    mem_saved = baseline["peak_memory_gib"] - optimized["peak_memory_gib"]
+    mem_pct = (mem_saved / baseline["peak_memory_gib"]) * 100 if baseline["peak_memory_gib"] > 0 else 0
+    speedup = baseline["sec_per_step"] / optimized["sec_per_step"] if optimized["sec_per_step"] > 0 else 0
+
+    print("\n" + "=" * 70)
+    print("RESULTS")
+    print("=" * 70)
+    print(f"{'Metric':<25} {'Baseline':>12} {'Optimized':>12} {'Delta':>15}")
+    print("-" * 70)
+    print(f"{'Peak GPU Memory (GiB)':<25} {baseline['peak_memory_gib']:>12.2f} {optimized['peak_memory_gib']:>12.2f} {mem_saved:>+12.2f} GiB ({mem_pct:.1f}%)")
+    print(f"{'Time/step (sec)':<25} {baseline['sec_per_step']:>12.3f} {optimized['sec_per_step']:>12.3f}   {speedup:.2f}x speedup")
+    print(f"{'Total time (sec)':<25} {baseline['elapsed_sec']:>12.2f} {optimized['elapsed_sec']:>12.2f}")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
