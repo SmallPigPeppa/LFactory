@@ -1,3 +1,5 @@
 # LlamaBoard Web UI
 
 This page is not yet available in English. Use the language switcher to view Simplified Chinese.
+
+For user-visible WebUI updates and recent UX changes, see [Release Notes](release-notes.md).

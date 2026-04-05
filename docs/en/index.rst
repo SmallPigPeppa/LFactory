@@ -8,6 +8,7 @@ LlamaFactory Docs
    getting-started
    installation
    llamaboard-web-ui
+   release-notes
 
 .. toctree::
    :maxdepth: 1

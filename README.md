@@ -135,6 +135,8 @@ Read technical notes:
 
 ## Changelog
 
+[26/04/05] We added a documentation-backed enhancement tracking flow for recent WebUI changes, including per-field help popups, Zena quick menu controls, expanded WebUI language options, and locale fallback improvements. See [docs/en/release-notes.md](docs/en/release-notes.md) for details.
+
 [25/10/26] We support Megatron-core training backend with [**mcore_adapter**](https://github.com/alibaba/ROLL/tree/main/mcore_adapter). See [PR #9237](https://github.com/hiyouga/LLaMA-Factory/pull/9237) to get started.
 
 [25/08/22] We supported **[OFT](https://arxiv.org/abs/2306.07280)** and **[OFTv2](https://arxiv.org/abs/2506.19847)**. See [examples](examples/README.md) for usage.

@@ -20,6 +20,15 @@ There are several ways you can contribute to LLaMA Factory:
 
 LLaMA Factory follows the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html), check it for details.
 
+### Documentation and enhancement tracking
+
+For every user-visible behavior change (for example: WebUI workflow, export behavior, training defaults, or inference UX), update release notes in both languages in the same pull request:
+
+- `docs/en/release-notes.md`
+- `docs/zh/release-notes.md`
+
+Keep entries concise and behavior-focused so users can quickly understand what changed.
+
 ### Create a Pull Request
 
 1. Fork the [repository](https://github.com/hiyouga/LLaMA-Factory) by clicking on the [Fork](https://github.com/hiyouga/LLaMA-Factory/fork) button on the repository's page. This creates a copy of the code under your GitHub user account.
