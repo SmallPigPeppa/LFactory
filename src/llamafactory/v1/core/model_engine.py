@@ -56,29 +56,23 @@ class ModelEngine:
     def __init__(
         self,
         model_args: ModelArguments,
-        training_args=None,
         is_train: bool = False,
     ) -> None:
         self.args = model_args
         """Model arguments."""
         self.is_train = is_train
         """Whether to train the model."""
-        self.training_args = training_args
-        """Training arguments used to control model-loading and training precision behavior."""
         self.processor = self._init_processor()
         """Tokenizer or multi-modal processor."""
         self.renderer = Renderer(self.args.template, self.processor)
         """Renderer."""
         self.model_config = self._init_model_config()
         """Model configuration."""
-        self._bf16_enabled = bool(self.is_train and self.training_args is not None and self.training_args.bf16)
+        self._dist_config = DistributedInterface().dist_config
         self._deepspeed_zero3_plugin = None
         self._deepspeed_zero3_enabled = False
         try:
-            dist_config = self.training_args.dist_config if self.training_args is not None else None
-            self._deepspeed_zero3_plugin = setup_deepspeed_zero3_model_loading(
-                self.is_train, dist_config, bf16=self._bf16_enabled
-            )
+            self._deepspeed_zero3_plugin = setup_deepspeed_zero3_model_loading(self.is_train, self._dist_config)
             self._deepspeed_zero3_enabled = self._deepspeed_zero3_plugin is not None
             self.model = self._init_model()
             """HF model."""
@@ -164,8 +158,7 @@ class ModelEngine:
         if self.args.peft_config is None:
             if self.is_train:
                 logger.info_rank0("Fine-tuning mode: full tuning")
-                target_dtype = torch.bfloat16 if self._bf16_enabled else torch.float32
-                model = model.to(target_dtype)
+                model = model.to(torch.float32)
             else:
                 logger.info_rank0("Inference the original model")
         else:

@@ -54,7 +54,7 @@ class TrainingArguments:
         metadata={"help": "Maximum gradient norm for training."},
     )
     bf16: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Use bf16 for training."},
     )
     batching_strategy: BatchingStrategy = field(

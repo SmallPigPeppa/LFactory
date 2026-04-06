@@ -85,7 +85,6 @@ class BaseTrainer:
             self._deepspeed_engine = DistributedPlugin("deepspeed")(
                 self.model,
                 self.args.dist_config,
-                training_args=self.args,
                 num_micro_batch=self.train_batch_generator.num_micro_batch,
                 micro_batch_size=self.args.micro_batch_size,
             )
@@ -128,7 +127,7 @@ class BaseTrainer:
             self.model = DistributedPlugin(self.args.dist_config.name)(
                 self.model,
                 self.args.dist_config,
-                training_args=self.args,
+                bf16=self.args.bf16,
             )
 
     def _init_optimizer(self) -> None:

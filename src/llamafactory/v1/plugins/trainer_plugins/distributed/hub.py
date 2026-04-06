@@ -33,7 +33,7 @@ class DistributedPlugin(BasePlugin):
 def shard_model_fsdp2(model: HFModel, dist_config: PluginConfig, **kwargs) -> HFModel:
     from .fsdp2 import FSDP2Engine
 
-    return FSDP2Engine(dist_config, training_args=kwargs.get("training_args")).shard_model(model)
+    return FSDP2Engine(dist_config, bf16=bool(kwargs.get("bf16"))).shard_model(model)
 
 
 @DistributedPlugin("fsdp2").register("save_model")
@@ -49,7 +49,6 @@ def shard_model_deepspeed(model: HFModel, dist_config: PluginConfig, **kwargs) -
 
     return DeepSpeedEngine(
         dist_config,
-        training_args=kwargs.get("training_args"),
         num_micro_batch=kwargs.get("num_micro_batch"),
         micro_batch_size=kwargs.get("micro_batch_size"),
     ).shard_model(model)
