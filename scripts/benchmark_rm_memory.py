@@ -25,33 +25,36 @@ import torch
 # Patch the trainer BEFORE importing run_exp
 if "{mode}" == "baseline":
     import llamafactory.train.rm.trainer as rm_trainer
+    from transformers import Trainer
+    from types import MethodType
 
     _OrigInit = rm_trainer.PairwiseTrainer.__init__
 
-    def _baseline_init(self, *args, **kwargs):
-        # Call original (which applies optimizations)
-        _OrigInit(self, *args, **kwargs)
-        # UNDO: restore TRL's default forward
-        from trl import AutoModelForCausalLMWithValueHead
-        self.model.forward = AutoModelForCausalLMWithValueHead.forward.__get__(
-            self.model, type(self.model)
-        )
-        # UNDO: restore lm_head (a fresh Linear layer with random weights — fine for benchmarking)
-        pretrained = self.model.pretrained_model
-        _owner = pretrained
-        if hasattr(pretrained, "base_model") and hasattr(pretrained.base_model, "model"):
-            _owner = pretrained.base_model.model
-        config = pretrained.config
-        _owner.lm_head = torch.nn.Linear(
-            config.hidden_size, config.vocab_size, bias=False
-        ).to(dtype=next(pretrained.parameters()).dtype,
-             device=next(pretrained.parameters()).device)
+    def _baseline_init(self, finetuning_args, processor=None, **kwargs):
+        # Skip the norm hook optimization: call the Trainer constructor directly
+        from llamafactory.extras.packages import is_transformers_version_greater_than
+        from llamafactory.train.callbacks import FixValueHeadModelCallback, SaveProcessorCallback
+
+        if is_transformers_version_greater_than("4.46"):
+            kwargs["processing_class"] = kwargs.pop("tokenizer")
+
+        # Cast v_head dtype (keep this — it's needed for correctness)
+        model = kwargs["model"]
+        model_dtype = next(model.pretrained_model.parameters()).dtype
+        model.v_head = model.v_head.to(dtype=model_dtype)
+
+        Trainer.__init__(self, **kwargs)
+        self.model_accepts_loss_kwargs = False
+        self.finetuning_args = finetuning_args
+        self.can_return_loss = True
+        self.add_callback(FixValueHeadModelCallback)
+        if processor is not None:
+            self.add_callback(SaveProcessorCallback(processor))
 
     rm_trainer.PairwiseTrainer.__init__ = _baseline_init
 
-    _OrigLoss = rm_trainer.PairwiseTrainer.compute_loss
-
     def _baseline_loss(self, model, inputs, return_outputs=False, **kwargs):
+        # TRL's default: calls model with output_hidden_states=True
         _, _, values = model(**inputs, output_hidden_states=True, return_dict=True, use_cache=False)
         batch_size = inputs["input_ids"].size(0) // 2
         chosen_masks, rejected_masks = torch.split(inputs["attention_mask"], batch_size, dim=0)
@@ -105,9 +108,10 @@ with open("{output_dir}/bench_stats.json", "w") as f:
 print("BENCH_STATS:" + json.dumps(stats))
 """
     env = os.environ.copy()
+    env["HF_HUB_OFFLINE"] = "1"
     result = subprocess.run(
         [sys.executable, "-c", script],
-        env=env, capture_output=True, text=True, timeout=1800,
+        env=env, capture_output=True, text=True, timeout=3600,
     )
 
     # Print subprocess output for visibility
@@ -168,7 +172,7 @@ def main():
     print(f"  Time/step:   {baseline['sec_per_step']}s")
 
     # Run optimized
-    print("\n>>> OPTIMIZED (Identity lm_head + EfficientValueHeadForward)")
+    print("\n>>> OPTIMIZED (norm hook + output_hidden_states=False)")
     optimized = run_single_benchmark(
         "optimized", args.model, args.dataset, args.template,
         args.steps, args.batch_size, args.cutoff_len,

@@ -40,37 +40,6 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
-class EfficientValueHeadForward(torch.nn.Module):
-    """Wraps pretrained model + v_head to avoid output_hidden_states=True overhead.
-
-    Instead of TRL's default forward which stores all intermediate hidden states
-    from every transformer layer, this calls the pretrained model with
-    output_hidden_states=False and uses the logits (which equal the last hidden
-    state after lm_head is replaced with Identity) to compute the value.
-    Stored as a submodule so torch.compile can trace it properly.
-    """
-
-    def __init__(self, pretrained_model: torch.nn.Module, v_head: torch.nn.Module) -> None:
-        super().__init__()
-        self.pretrained_model = pretrained_model
-        self.v_head = v_head
-
-    def forward(self, input_ids=None, attention_mask=None, **kwargs):
-        kwargs.pop("output_hidden_states", None)
-        kwargs.pop("return_past_key_values", None)
-        kwargs.pop("labels", None)  # labels would fail with Identity lm_head
-        base_output = self.pretrained_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=False,
-            **kwargs,
-        )
-        # With lm_head=Identity, logits ARE the last hidden state
-        last_hidden_state = base_output.logits
-        value = self.v_head(last_hidden_state).squeeze(-1)
-        return (base_output.logits, base_output.loss, value)
-
-
 class PairwiseTrainer(Trainer):
     r"""Inherits Trainer to compute pairwise loss."""
 
@@ -79,6 +48,26 @@ class PairwiseTrainer(Trainer):
     ) -> None:
         if is_transformers_version_greater_than("4.46"):
             kwargs["processing_class"] = kwargs.pop("tokenizer")
+
+        # Register a forward hook on the final norm layer to capture the last
+        # hidden state. This lets compute_loss call the pretrained model with
+        # output_hidden_states=False, avoiding storage of all intermediate
+        # layer outputs (~4 GiB savings for 36-layer models at batch_size=4).
+        model = kwargs["model"]
+        self._last_hidden_state = None
+
+        _pretrained = model.pretrained_model
+        _causal_lm = _pretrained
+        if hasattr(_pretrained, "base_model") and hasattr(_pretrained.base_model, "model"):
+            _causal_lm = _pretrained.base_model.model
+
+        self._hidden_state_hook = _causal_lm.model.norm.register_forward_hook(
+            lambda mod, inp, out: setattr(self, "_last_hidden_state", out)
+        )
+
+        # Cast v_head to match model dtype for FSDP compatibility
+        model_dtype = next(model.pretrained_model.parameters()).dtype
+        model.v_head = model.v_head.to(dtype=model_dtype)
 
         super().__init__(**kwargs)
         self.model_accepts_loss_kwargs = False  # overwrite trainer's default behavior
@@ -94,27 +83,6 @@ class PairwiseTrainer(Trainer):
 
             self.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, self.accelerator)
             self.add_callback(BAdamCallback)
-
-        # Optimize memory: replace lm_head with Identity to skip the expensive
-        # hidden_dim -> vocab_size projection that is never used in reward modeling,
-        # and override forward to use output_hidden_states=False to avoid storing
-        # all intermediate hidden states (~6 GiB savings for 36-layer models).
-        _pretrained = self.model.pretrained_model
-        _lm_head_owner = _pretrained
-        if hasattr(_pretrained, "base_model") and hasattr(_pretrained.base_model, "model"):
-            _lm_head_owner = _pretrained.base_model.model
-        if hasattr(_lm_head_owner, "lm_head"):
-            _lm_head_owner.lm_head = torch.nn.Identity()
-
-        # Cast v_head to match model dtype for FSDP compatibility
-        model_dtype = next(self.model.pretrained_model.parameters()).dtype
-        self.model.v_head = self.model.v_head.to(dtype=model_dtype)
-
-        # Override forward with efficient wrapper that skips hidden state storage
-        self.model._efficient_forward = EfficientValueHeadForward(
-            self.model.pretrained_model, self.model.v_head
-        )
-        self.model.forward = self.model._efficient_forward.forward
 
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
@@ -147,7 +115,14 @@ class PairwiseTrainer(Trainer):
         Note that the first element will be removed from the output tuple.
         See: https://github.com/huggingface/transformers/blob/v4.40.0/src/transformers/trainer.py#L3842
         """
-        _, _, values = model(**inputs, use_cache=False)
+        # Call pretrained_model directly with output_hidden_states=False to avoid
+        # storing all intermediate hidden states. The last hidden state is captured
+        # by the forward hook registered on the final norm layer.
+        fwd_kwargs = {k: v for k, v in inputs.items()}
+        fwd_kwargs.pop("labels", None)
+        model.pretrained_model(**fwd_kwargs, output_hidden_states=False, use_cache=False)
+        values = model.v_head(self._last_hidden_state).squeeze(-1)
+
         batch_size = inputs["input_ids"].size(0) // 2
         chosen_masks, rejected_masks = torch.split(inputs["attention_mask"], batch_size, dim=0)
         chosen_rewards, rejected_rewards = torch.split(values, batch_size, dim=0)
