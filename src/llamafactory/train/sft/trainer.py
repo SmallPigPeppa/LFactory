@@ -222,7 +222,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             input_ids_list = list(input_ids_column)
         flat_input_ids = []
         for ids in input_ids_list:
-            if ids and isinstance(ids[0], list):
+            if len(ids) > 0 and isinstance(ids[0], (list, tuple)):
                 flat_input_ids.append([tok for sublist in ids for tok in sublist])
             else:
                 flat_input_ids.append(ids)
