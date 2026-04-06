@@ -220,8 +220,14 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             input_ids_list = input_ids_column.to_pylist()
         except AttributeError:
             input_ids_list = list(input_ids_column)
+        flat_input_ids = []
+        for ids in input_ids_list:
+            if ids and isinstance(ids[0], list):
+                flat_input_ids.append([tok for sublist in ids for tok in sublist])
+            else:
+                flat_input_ids.append(ids)
 
-        decoded_inputs = self.processing_class.batch_decode(input_ids_list, skip_special_tokens=False)
+        decoded_inputs = self.processing_class.batch_decode(flat_input_ids, skip_special_tokens=False)
         decoded_preds = self.processing_class.batch_decode(preds, skip_special_tokens=skip_special_tokens)
         decoded_labels = self.processing_class.batch_decode(labels, skip_special_tokens=skip_special_tokens)
 
