@@ -183,7 +183,10 @@ Every stage is idempotent — re-run the same command after any crash:
 | Dataset registration | Entry already in `dataset_info.json` | Idempotent write |
 | SFT training | `adapter_model.safetensors` present in output dir | Auto-resumes from highest `checkpoint-N` |
 | DPO training | Same as SFT, or no `conflict_dpo.jsonl` samples | Skipped entirely when no DPO data |
-| Merge | `saves/<tag>/merged/config.json` exists | Full skip |
+| Merge | `saves/<tag>/merged/config.json` exists | Full skip; auto-recovers adapter path from highest checkpoint |
+| Forge results | `saves/<tag>/forge_results.jsonl` exists | Full skip; synthesized from training artifacts in sequential mode |
+| Evaluation | `saves/<tag>/eval_scorecards.jsonl` exists | Full skip; two-pass: quick quiz → deep exam |
+| Dashboard | `saves/<tag>/graduation_report.json` exists | Exports markdown + HTML |
 
 #### Student Forge Matrix (parallel multi-variant training)
 

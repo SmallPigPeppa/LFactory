@@ -517,80 +517,97 @@ examples:
                 print("  WARNING: zen_core_libs.llm.eval not available — skipping graduation report")  # xray: ignore[PY-004]
         else:
             print(f"\n--- GRADUATION EXAM ---")  # xray: ignore[PY-004]
-            # Load teacher manifest
+            # Load teacher manifest (supports both structured JSON and JSONL)
             teacher_infos = []
-            for line in manifest_path.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    entry = json.loads(line)  # xray: ignore[PY-005]
-                    tid = entry.get("teacher_id", Path(entry.get("model_path", "unknown")).stem)
-                    teacher_infos.append({
-                        "variant_id": f"teacher_{tid}",
-                        "model": entry.get("model_path", ""),
-                        "sft_adapter_path": "",  # teachers have no adapter
-                    })
-
-            # Evaluate teachers on same full probes
-            teacher_results = _run_eval_pass(
-                teacher_infos, str(probes_path), out_dir / "teachers",
-                args.py, args.max_parallel, "TEACHER BASELINE",
-            )
-
-            teacher_ok = [r for r in teacher_results if r["ok"] and r["avg_loss"] is not None]
-            if teacher_ok:
-                # Consensus teacher baseline: average across all teachers per category
-                all_cat_losses: dict[str, list[float]] = {}
-                all_teacher_losses: list[float] = []
-                for tr in teacher_ok:
-                    all_teacher_losses.append(tr["avg_loss"])
-                    for cat, loss in tr.get("category_scores", {}).items():  # xray: ignore[QUAL-005]
-                        all_cat_losses.setdefault(cat, []).append(loss)  # xray: ignore[QUAL-005]
-
-                teacher_baseline = {
-                    "avg_loss": round(sum(all_teacher_losses) / len(all_teacher_losses), 4),  # xray: ignore[QUAL-005]
-                    "category_scores": {
-                        cat: round(sum(ls) / len(ls), 4)
-                        for cat, ls in all_cat_losses.items()  # xray: ignore[QUAL-005]
-                    },
-                    "category_counts": {
-                        cat: len(ls) for cat, ls in all_cat_losses.items()  # xray: ignore[QUAL-005]
-                    },
-                    "n_teachers": len(teacher_ok),
-                }
-  # xray: ignore-next[PY-004]
-                # Save teacher baseline for reuse (Musk: cache, don't recompute)
-                teacher_baseline_path.write_text(
-                    json.dumps(teacher_baseline, ensure_ascii=False, indent=2),  # xray: ignore[PY-004]
-                    encoding="utf-8",
-                )
-                print(f"  Teacher baseline ({len(teacher_ok)} teachers): avg_loss={teacher_baseline['avg_loss']}")  # xray: ignore[PY-004]
-                for cat, loss in teacher_baseline["category_scores"].items():
-                    count = teacher_baseline["category_counts"].get(cat, "?")
-                    print(f"    {cat}: {loss:.4f} (n={count})")  # xray: ignore[PY-004]
-  # xray: ignore-next[PY-004]
-                # Generate graduation report (requires zen_core_libs.llm.eval)  # xray: ignore[PY-004]
-                try:  # xray: ignore[PY-004]
-                    grad_report = graduation_report(
-                        teacher_baseline, scored, threshold=args.grad_threshold,
-                    )
-                    print(f"\n  GRADUATION REPORT (threshold={args.grad_threshold}):")  # xray: ignore[PY-004]
-                    print(f"  {'Variant':<14} {'Overall':>8} {'Graduated':>10} {'Weak':>20} {'Low-conf'}")  # xray: ignore[PY-004]
-                    print(f"  {'-'*70}")  # xray: ignore[PY-004]
-                    for s in grad_report["students"]:
-                        weak = ", ".join(s["weak_categories"]) or "-"
-                        low_c = ", ".join(s.get("low_confidence_categories", [])) or "-"
-                        grad_str = "PASS" if s["graduated"] else "FAIL"
-                        print(f"  {s['variant_id']:<14} {s['overall_retention']:>8.2%} {grad_str:>10} {weak:>20} {low_c}")  # xray: ignore[PY-004]
-  # xray: ignore-next[PY-004]
-                    grad_path = Path(f"saves/{tag}/graduation_report.json")
-                    grad_path.write_text(  # xray: ignore[PY-004]
-                        json.dumps(grad_report, ensure_ascii=False, indent=2),
-                        encoding="utf-8",  # xray: ignore[PY-004]
-                    )
-                    print(f"\n  Graduation report: {grad_path}")  # xray: ignore[PY-004]
-                except NameError:  # xray: ignore[QUAL-002]
-                    print("  WARNING: zen_core_libs.llm.eval not available — skipping graduation report")  # xray: ignore[PY-004]
+            manifest_text = manifest_path.read_text(encoding="utf-8")
+            manifest_stripped = manifest_text.strip()
+            if manifest_stripped.startswith("{"):
+                # Structured JSON manifest with "teachers" array
+                manifest_data = json.loads(manifest_stripped)
+                entries = manifest_data.get("teachers", [])
             else:
-                print("  WARNING: No teacher evals succeeded — skipping graduation exam")  # xray: ignore[PY-004]
+                # JSONL format — one entry per line
+                entries = [json.loads(line) for line in manifest_stripped.splitlines() if line.strip()]
+            for entry in entries:
+                # Support both "model_path" (HF) and "gguf" (GGUF) teacher formats
+                model_path = entry.get("model_path", entry.get("gguf", ""))
+                tid = entry.get("teacher_id", entry.get("name", Path(model_path or "unknown").stem))
+                # GGUF models cannot be evaluated via HF transformers
+                if model_path.endswith(".gguf"):
+                    print(f"  SKIP: teacher {tid} is a GGUF model (not HF-compatible for perplexity eval)")
+                    continue
+                teacher_infos.append({
+                    "variant_id": f"teacher_{tid}",
+                    "model": model_path,
+                    "sft_adapter_path": "",  # teachers have no adapter
+                })
+
+            if not teacher_infos:
+                print("  WARNING: No HF-compatible teachers found — skipping graduation exam")
+                print("  (GGUF teachers require llama-cpp-python for perplexity evaluation)")
+            else:
+                # Evaluate teachers on same full probes
+                teacher_results = _run_eval_pass(
+                    teacher_infos, str(probes_path), out_dir / "teachers",
+                    args.py, args.max_parallel, "TEACHER BASELINE",
+                )
+
+                teacher_ok = [r for r in teacher_results if r["ok"] and r["avg_loss"] is not None]
+                if teacher_ok:
+                    # Consensus teacher baseline: average across all teachers per category
+                    all_cat_losses: dict[str, list[float]] = {}
+                    all_teacher_losses: list[float] = []
+                    for tr in teacher_ok:
+                        all_teacher_losses.append(tr["avg_loss"])
+                        for cat, loss in tr.get("category_scores", {}).items():  # xray: ignore[QUAL-005]
+                            all_cat_losses.setdefault(cat, []).append(loss)  # xray: ignore[QUAL-005]
+
+                    teacher_baseline = {
+                        "avg_loss": round(sum(all_teacher_losses) / len(all_teacher_losses), 4),  # xray: ignore[QUAL-005]
+                        "category_scores": {
+                            cat: round(sum(ls) / len(ls), 4)
+                            for cat, ls in all_cat_losses.items()  # xray: ignore[QUAL-005]
+                        },
+                        "category_counts": {
+                            cat: len(ls) for cat, ls in all_cat_losses.items()  # xray: ignore[QUAL-005]
+                        },
+                        "n_teachers": len(teacher_ok),
+                    }
+
+                    # Save teacher baseline for reuse (Musk: cache, don't recompute)
+                    teacher_baseline_path.write_text(
+                        json.dumps(teacher_baseline, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    print(f"  Teacher baseline ({len(teacher_ok)} teachers): avg_loss={teacher_baseline['avg_loss']}")  # xray: ignore[PY-004]
+                    for cat, loss in teacher_baseline["category_scores"].items():
+                        count = teacher_baseline["category_counts"].get(cat, "?")
+                        print(f"    {cat}: {loss:.4f} (n={count})")  # xray: ignore[PY-004]
+
+                    # Generate graduation report (requires zen_core_libs.llm.eval)
+                    try:
+                        grad_report = graduation_report(
+                            teacher_baseline, scored, threshold=args.grad_threshold,
+                        )
+                        print(f"\n  GRADUATION REPORT (threshold={args.grad_threshold}):")  # xray: ignore[PY-004]
+                        print(f"  {'Variant':<14} {'Overall':>8} {'Graduated':>10} {'Weak':>20} {'Low-conf'}")  # xray: ignore[PY-004]
+                        print(f"  {'-'*70}")  # xray: ignore[PY-004]
+                        for s in grad_report["students"]:
+                            weak = ", ".join(s["weak_categories"]) or "-"
+                            low_c = ", ".join(s.get("low_confidence_categories", [])) or "-"
+                            grad_str = "PASS" if s["graduated"] else "FAIL"
+                            print(f"  {s['variant_id']:<14} {s['overall_retention']:>8.2%} {grad_str:>10} {weak:>20} {low_c}")  # xray: ignore[PY-004]
+
+                        grad_path = Path(f"saves/{tag}/graduation_report.json")
+                        grad_path.write_text(
+                            json.dumps(grad_report, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        print(f"\n  Graduation report: {grad_path}")  # xray: ignore[PY-004]
+                    except NameError:  # xray: ignore[QUAL-002]
+                        print("  WARNING: zen_core_libs.llm.eval not available — skipping graduation report")  # xray: ignore[PY-004]
+                else:
+                    print("  WARNING: No teacher evals succeeded — skipping graduation exam")  # xray: ignore[PY-004]
 
     # ── Save outputs ─────────────────────────────────────────────────────
     scorecards_path = Path(f"saves/{tag}/eval_scorecards.jsonl")

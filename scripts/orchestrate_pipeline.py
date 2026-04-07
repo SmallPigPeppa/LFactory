@@ -18,10 +18,15 @@
 Runs all distillation pipeline stages in sequence:
   1. Generate multi-teacher responses
   2. Purify into consensus (SFT) / conflict (DPO) splits
-  3. Auto-generate training configs
-  4. Register datasets
-  5. Train SFT → [DPO if samples] → Merge
-  OR: Student Forge Matrix (parallel training)
+  3. Validate datasets
+  4. Auto-generate training configs
+  5. Train SFT → [DPO if samples]
+  6. Merge adapters
+  7. Recover + synthesize forge results (bridge sequential → eval)
+  8. Evaluate student (two-pass: quick quiz → deep exam)
+  9. Graduation dashboard
+
+  OR: Student Forge Matrix (parallel training) for stages 5-6.
 
 Every stage is idempotent — re-run after any crash.
 
@@ -95,6 +100,82 @@ def _read_yaml(path: str | Path) -> dict:
     return yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
 
 
+def _find_latest_checkpoint(adapter_dir: str | Path) -> Path | None:
+    """Find the highest checkpoint-N directory that contains adapter_model.safetensors."""
+    adapter_path = Path(adapter_dir)
+    if not adapter_path.exists():
+        return None
+    # First check if adapter exists in the root dir
+    if (adapter_path / "adapter_model.safetensors").exists():
+        return adapter_path
+    # Scan for checkpoint-N/ subdirs
+    checkpoints = sorted(
+        (d for d in adapter_path.iterdir() if d.is_dir() and d.name.startswith("checkpoint-")),
+        key=lambda d: int(d.name.split("-", 1)[1]) if d.name.split("-", 1)[1].isdigit() else 0,
+    )
+    for ckpt in reversed(checkpoints):
+        if (ckpt / "adapter_model.safetensors").exists():
+            return ckpt
+    return None
+
+
+def _get_final_loss(trainer_log: str | Path) -> float | None:
+    """Read the last loss value from trainer_log.jsonl."""
+    log_path = Path(trainer_log)
+    if not log_path.exists():
+        return None
+    last_line = None
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped:
+            last_line = stripped
+    if not last_line:
+        return None
+    try:
+        entry = json.loads(last_line)
+        return float(entry.get("loss", 0))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+
+
+def _synthesize_forge_results(
+    tag: str,
+    student_model: str,
+    adapter_dir: str,
+    forge_path: Path,
+) -> bool:
+    """Create a forge_results.jsonl from sequential training artifacts.
+
+    Bridges the gap between sequential training and eval_student_panel.py
+    which expects forge results.
+    """
+    adapter = _find_latest_checkpoint(adapter_dir)
+    if adapter is None:
+        print(f"WARNING: No adapter found in {adapter_dir}")
+        return False
+
+    trainer_log = Path(adapter_dir) / "trainer_log.jsonl"
+    final_loss = _get_final_loss(trainer_log)
+
+    result = {
+        "variant_id": "B",
+        "model": student_model,
+        "sft_adapter_path": str(adapter),
+        "sft_final_loss": final_loss,
+        "ok": True,
+    }
+
+    forge_path.parent.mkdir(parents=True, exist_ok=True)
+    forge_path.write_text(
+        json.dumps(result, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"  Synthesized forge results → {forge_path}")
+    print(f"    adapter: {adapter}")
+    print(f"    final_loss: {final_loss}")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Cross-platform pipeline orchestrator for multi-teacher distillation.",
@@ -102,6 +183,7 @@ def main() -> int:
 examples:
   %(prog)s --tag zena007
   %(prog)s --tag zena007 --skip-train --skip-dpo
+  %(prog)s --tag zena007 --skip-train --skip-merge  (eval only)
   %(prog)s --tag zena007 --use-forge
   %(prog)s --tag zena007 --dry-run
 """,
@@ -115,6 +197,8 @@ examples:
     parser.add_argument("--skip-train", action="store_true", help="Skip training steps.")
     parser.add_argument("--skip-dpo", action="store_true", help="Skip DPO training.")
     parser.add_argument("--skip-merge", action="store_true", help="Skip merge step.")
+    parser.add_argument("--skip-eval", action="store_true", help="Skip evaluation step.")
+    parser.add_argument("--skip-dashboard", action="store_true", help="Skip dashboard step.")
     parser.add_argument("--use-forge", action="store_true", help="Use Student Forge Matrix (parallel).")
     parser.add_argument("--forge-matrix", default="", help="Forge matrix YAML path.")
     parser.add_argument("--cpu-safe", action="store_true", help="CPU-only mode (disable bf16).")
@@ -263,6 +347,13 @@ examples:
                 steps_run += 1
 
     # ── Stage 6: Merge ───────────────────────────────────────────────────
+    # Recovery: if adapter root dir lacks adapter_model.safetensors,
+    # update the merge config to point to the latest checkpoint.
+    sft_adapter_dir = f"saves/{tag}/lora/sft"
+    effective_adapter = _find_latest_checkpoint(sft_adapter_dir)
+    if effective_adapter and str(effective_adapter) != sft_adapter_dir:
+        print(f"[RECOVER] Training adapter not in root dir; using {effective_adapter}")
+
     if args.skip_merge:
         print("[SKIP] Merge: --skip-merge")  # xray: ignore[PY-004]
         steps_skipped += 1
@@ -270,14 +361,108 @@ examples:
         print(f"[SKIP] Merge: {merged_dir}/config.json already exists")  # xray: ignore[PY-004]
         steps_skipped += 1
     elif _file_nonempty(merge_cfg):
+        # If adapter is in a checkpoint subdir, update merge config
+        if effective_adapter and str(effective_adapter) != sft_adapter_dir and not dry:
+            merge_conf = _read_yaml(merge_cfg)
+            if merge_conf and _HAS_YAML:
+                merge_conf["adapter_name_or_path"] = str(effective_adapter)
+                Path(merge_cfg).write_text(
+                    yaml.dump(merge_conf, default_flow_style=False, allow_unicode=True),
+                    encoding="utf-8",
+                )
+                print(f"  Updated merge config adapter path → {effective_adapter}")
         code = _run_step("Merge adapters", [
             py, "-m", "llamafactory.cli", "export", merge_cfg,
         ], dry_run=dry)
         steps_run += 1
 
+    # ── Stage 7: Synthesize forge results (sequential mode) ──────────────
+    forge_results_path = Path(f"saves/{tag}/forge_results.jsonl")
+    if not args.use_forge and not _file_nonempty(forge_results_path):
+        print(f"\n[STAGE 7] Synthesize forge results for evaluation")
+        if dry:
+            print("  (dry-run — skipped)")
+        elif effective_adapter:
+            _synthesize_forge_results(tag, args.student_model, sft_adapter_dir, forge_results_path)
+            steps_run += 1
+        else:
+            print(f"  WARNING: No adapter found — cannot synthesize forge results")
+    elif _file_nonempty(forge_results_path):
+        print(f"[SKIP] Forge results: {forge_results_path} already exists")
+        steps_skipped += 1
+
+    # ── Stage 8: Evaluation ──────────────────────────────────────────────
+    eval_probes = f"{purified_dir}/eval_probes.jsonl"
+    eval_scorecards = f"saves/{tag}/eval_scorecards.jsonl"
+
+    if args.skip_eval:
+        print("[SKIP] Evaluation: --skip-eval")
+        steps_skipped += 1
+    elif _file_nonempty(eval_scorecards):
+        print(f"[SKIP] Evaluation: {eval_scorecards} already exists")
+        steps_skipped += 1
+    elif not _file_nonempty(eval_probes):
+        print(f"[SKIP] Evaluation: no eval probes at {eval_probes}")
+        steps_skipped += 1
+    elif not _file_nonempty(forge_results_path):
+        print(f"[SKIP] Evaluation: no forge_results.jsonl")
+        steps_skipped += 1
+    else:
+        eval_cmd = [
+            py, str(scripts / "eval_student_panel.py"),
+            "--saves-tag", tag,
+            "--probes", eval_probes,
+        ]
+        # Add teacher manifest for graduation exam if available
+        manifest = f"data/{tag}/teacher_manifest.json"
+        if Path(manifest).exists():
+            eval_cmd.extend(["--teacher-manifest", manifest])
+        code = _run_step("Student evaluation (two-pass)", eval_cmd, dry_run=dry)
+        if code != 0:
+            print("WARNING: Evaluation had failures (non-fatal — continuing)")
+        steps_run += 1
+
+    # ── Stage 9: Graduation Dashboard ────────────────────────────────────
+    grad_report_path = f"saves/{tag}/graduation_report.json"
+
+    if args.skip_dashboard:
+        print("[SKIP] Dashboard: --skip-dashboard")
+        steps_skipped += 1
+    elif _file_nonempty(grad_report_path):
+        dash_cmd = [
+            py, str(scripts / "graduation_dashboard.py"),
+            "--report", grad_report_path,
+            "--saves-tag", tag,
+            "--export-markdown",
+        ]
+        code = _run_step("Graduation dashboard", dash_cmd, dry_run=dry)
+        steps_run += 1
+    elif _file_nonempty(eval_scorecards):
+        # No graduation report but scorecards exist — still show dashboard
+        print(f"[INFO] No graduation report (no teacher manifest). Scorecards at {eval_scorecards}")
+        steps_run += 1
+    else:
+        print("[SKIP] Dashboard: no evaluation results")
+        steps_skipped += 1
+
     # ── Summary ──────────────────────────────────────────────────────────
+    status = "FAILED" if failed else "complete"
     print(f"\n{'='*60}")  # xray: ignore[PY-004]
-    print(f"Pipeline complete: {steps_run} steps run, {steps_skipped} skipped")  # xray: ignore[PY-004]
+    print(f"Pipeline {status}: {steps_run} steps run, {steps_skipped} skipped")  # xray: ignore[PY-004]
+
+    # Report final artifacts
+    artifacts = [
+        (f"saves/{tag}/forge_results.jsonl", "Forge results"),
+        (f"saves/{tag}/eval_scorecards.jsonl", "Eval scorecards"),
+        (f"saves/{tag}/champion.txt", "Champion"),
+        (f"saves/{tag}/graduation_report.json", "Graduation report"),
+        (f"{merged_dir}/config.json", "Merged model"),
+    ]
+    found = [(label, path) for path, label in artifacts if _file_nonempty(path)]
+    if found:
+        print(f"\nArtifacts:")
+        for label, path in found:
+            print(f"  {label}: {path}")
     print(f"{'='*60}")  # xray: ignore[PY-004]
     return 0
 

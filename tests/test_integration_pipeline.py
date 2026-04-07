@@ -248,3 +248,93 @@ class TestSimHash:
 
         assert _simhash_similarity("", "hello") == 0.0
         assert _simhash_similarity("hello", "") == 0.0
+
+
+class TestOrchestratorRecovery:
+    """Tests for orchestrate_pipeline.py recovery and forge-results synthesis."""
+
+    def _import_orchestrator(self):
+        sys.path.insert(0, str(_SCRIPTS_DIR))
+        import importlib
+        import orchestrate_pipeline
+        importlib.reload(orchestrate_pipeline)
+        return orchestrate_pipeline
+
+    def test_find_latest_checkpoint_root_adapter(self, tmp_path):
+        """When adapter_model.safetensors is in the root dir, return root."""
+        orch = self._import_orchestrator()
+        (tmp_path / "adapter_model.safetensors").write_bytes(b"\x00" * 10)
+        result = orch._find_latest_checkpoint(tmp_path)
+        assert result == tmp_path
+
+    def test_find_latest_checkpoint_highest(self, tmp_path):
+        """When no root adapter, find the highest checkpoint-N."""
+        orch = self._import_orchestrator()
+        for n in [50, 100, 200]:
+            ckpt = tmp_path / f"checkpoint-{n}"
+            ckpt.mkdir()
+            (ckpt / "adapter_model.safetensors").write_bytes(b"\x00" * 10)
+        result = orch._find_latest_checkpoint(tmp_path)
+        assert result == tmp_path / "checkpoint-200"
+
+    def test_find_latest_checkpoint_none(self, tmp_path):
+        """Empty dir returns None."""
+        orch = self._import_orchestrator()
+        result = orch._find_latest_checkpoint(tmp_path)
+        assert result is None
+
+    def test_find_latest_checkpoint_skip_empty(self, tmp_path):
+        """Checkpoint dirs without adapter_model.safetensors are skipped."""
+        orch = self._import_orchestrator()
+        (tmp_path / "checkpoint-200").mkdir()  # empty — no adapter
+        ckpt100 = tmp_path / "checkpoint-100"
+        ckpt100.mkdir()
+        (ckpt100 / "adapter_model.safetensors").write_bytes(b"\x00" * 10)
+        result = orch._find_latest_checkpoint(tmp_path)
+        assert result == ckpt100
+
+    def test_get_final_loss(self, tmp_path):
+        """Read the last loss from trainer_log.jsonl."""
+        orch = self._import_orchestrator()
+        log_path = tmp_path / "trainer_log.jsonl"
+        log_path.write_text(
+            '{"current_steps": 100, "loss": 1.5}\n'
+            '{"current_steps": 200, "loss": 0.89}\n',
+            encoding="utf-8",
+        )
+        assert orch._get_final_loss(log_path) == 0.89
+
+    def test_get_final_loss_empty(self, tmp_path):
+        """Empty file returns None."""
+        orch = self._import_orchestrator()
+        assert orch._get_final_loss(tmp_path / "nonexistent.jsonl") is None
+
+    def test_synthesize_forge_results(self, tmp_path):
+        """Synthesize forge_results.jsonl from training artifacts."""
+        orch = self._import_orchestrator()
+        # Create fake adapter
+        ckpt = tmp_path / "adapter" / "checkpoint-200"
+        ckpt.mkdir(parents=True)
+        (ckpt / "adapter_model.safetensors").write_bytes(b"\x00" * 10)
+        # Create trainer log
+        (tmp_path / "adapter" / "trainer_log.jsonl").write_text(
+            '{"current_steps": 200, "loss": 1.05}\n',
+            encoding="utf-8",
+        )
+        forge_path = tmp_path / "forge_results.jsonl"
+        ok = orch._synthesize_forge_results("test", "model/test", str(tmp_path / "adapter"), forge_path)
+        assert ok is True
+        assert forge_path.exists()
+        result = json.loads(forge_path.read_text(encoding="utf-8").strip())
+        assert result["variant_id"] == "B"
+        assert result["model"] == "model/test"
+        assert result["sft_final_loss"] == 1.05
+        assert result["ok"] is True
+
+    def test_synthesize_forge_results_no_adapter(self, tmp_path):
+        """Returns False when no adapter found."""
+        orch = self._import_orchestrator()
+        forge_path = tmp_path / "forge_results.jsonl"
+        ok = orch._synthesize_forge_results("test", "model/test", str(tmp_path / "empty"), forge_path)
+        assert ok is False
+        assert not forge_path.exists()
