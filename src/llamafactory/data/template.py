@@ -1046,16 +1046,24 @@ register_template(
 )
 
 
-# text-only template for gemma4 (no mm_plugin) — useful for SFT/DPO on text datasets with RTX 2080 Ti
+# Text-only variant of gemma4 — identical to gemma4 but without mm_plugin.
+# Use this template when fine-tuning on text-only datasets to avoid the
+# "Processor was not found" error caused by the multimodal plugin attempting
+# to load a vision/audio processor that is not present in text-only setups.
 register_template(
     name="gemma4_text",
     format_user=StringFormatter(slots=["<|turn>user\n{{content}}<turn|>\n<|turn>model\n"]),
     format_assistant=StringFormatter(slots=["{{content}}<turn|>\n"]),
-    format_system=StringFormatter(slots=["<|turn>system\n{{content}}<turn|>\n"]),
+    format_system=StringFormatter(slots=["<|turn>system\n<|think|>{{content}}<turn|>\n"]),
+    format_observation=StringFormatter(slots=["<|turn>tool\n{{content}}<turn|>\n<|turn>model\n"]),
+    format_tools=ToolFormatter(tool_format="gemma4"),
+    format_function=FunctionFormatter(slots=["<|tool>{{content}}<tool|>"], tool_format="gemma4"),
     format_prefix=EmptyFormatter(slots=[{"bos_token"}]),
     stop_words=["<turn|>"],
     default_system="You are a helpful assistant.",
+    thought_words=("<|channel>thought\n", "<channel|>"),
     replace_eos=True,
+    template_class=ReasoningTemplate,
 )
 
 
