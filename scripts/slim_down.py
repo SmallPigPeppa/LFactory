@@ -235,6 +235,8 @@ def main() -> int:
     parser.add_argument("--max-parallel", type=int, default=2, help="Max concurrent export workers.")
     parser.add_argument("--py", default=".venv-py314/Scripts/python.exe", help="Python interpreter.")
     parser.add_argument("--output-dir", help="Output directory for GGUF files.")
+    parser.add_argument("--recommend-quant", action="store_true",
+                        help="Analyze Pareto frontier of size vs speed and recommend optimal quant.")
     args = parser.parse_args()
 
     # Resolve model/adapter from champion.txt if using saves-tag
@@ -347,6 +349,45 @@ def main() -> int:
                         print(f"Updated registry for {mid} with {len([r for r in results if r['ok']])} GGUF variants.")  # xray: ignore[PY-004]
         except Exception as exc:  # xray: ignore[QUAL-011]
             print(f"WARNING: Could not update registry: {exc}")  # xray: ignore[PY-004]
+
+    # ── Pareto frontier analysis ─────────────────────────────────────────
+    if args.recommend_quant:
+        ok_results = [r for r in results if r["ok"] and r.get("bench", {}).get("tok_per_sec")]
+        if len(ok_results) < 2:
+            print("\nPareto analysis: need >=2 quants with successful benchmarks.")  # xray: ignore[PY-004]
+        else:
+            # Sort by size ascending → smaller is better
+            ok_results.sort(key=lambda r: r["size_mb"])
+            print(f"\n{'='*60}")  # xray: ignore[PY-004]
+            print(f"  PARETO FRONTIER ANALYSIS (size vs speed)")
+            print(f"{'='*60}")  # xray: ignore[PY-004]
+
+            # Find Pareto-optimal points: no other point dominates on BOTH size and speed
+            pareto: list[dict] = []
+            for r in ok_results:
+                dominated = False
+                for p in ok_results:
+                    if p is r:
+                        continue
+                    # p dominates r if p is <= size AND >= speed (with at least one strict)
+                    p_speed = p["bench"]["tok_per_sec"]
+                    r_speed = r["bench"]["tok_per_sec"]
+                    if p["size_mb"] <= r["size_mb"] and p_speed >= r_speed:
+                        if p["size_mb"] < r["size_mb"] or p_speed > r_speed:
+                            dominated = True
+                            break
+                if not dominated:
+                    pareto.append(r)
+
+            print(f"\n  Pareto-optimal quants ({len(pareto)} of {len(ok_results)}):")  # xray: ignore[PY-004]
+            for r in pareto:
+                tok = r["bench"]["tok_per_sec"]
+                print(f"    {r['quant']:<12} {r['size_mb']:>8.1f} MB  {tok:>6.1f} tok/s")  # xray: ignore[PY-004]
+
+            # Recommend: best speed/size ratio among Pareto
+            best = max(pareto, key=lambda r: r["bench"]["tok_per_sec"] / max(r["size_mb"], 0.1))
+            print(f"\n  >>> RECOMMENDED: {best['quant']} (best speed/size ratio)")  # xray: ignore[PY-004]
+            print(f"      Size: {best['size_mb']:.1f} MB, Speed: {best['bench']['tok_per_sec']:.1f} tok/s")  # xray: ignore[PY-004]
 
     return 0
 

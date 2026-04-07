@@ -197,13 +197,89 @@ def build_dashboard(report: dict[str, Any]) -> gr.Blocks:
     return demo
 
 
+def _build_live_html(results: list[dict]) -> str:
+    """Build a live progress view from forge_results.jsonl entries."""
+    if not results:
+        return '<div class="dash"><p style="text-align:center;color:#86868b;padding:64px 0">Waiting for results...</p></div>'
+
+    ok = [r for r in results if r.get("ok")]
+    failed = [r for r in results if not r.get("ok")]
+
+    html = f'<div class="dash"><style>{_CSS}</style>'
+    html += f'<div class="verdict">'
+    html += f'<p class="pct" style="color:#2563eb">{len(ok)}</p>'
+    html += f'<p class="label" style="color:#2563eb">completed ({len(failed)} failed)</p>'
+    html += "</div>"
+
+    html += '<table class="grid"><thead><tr>'
+    html += "<th>Variant</th><th>Model</th><th>SFT Loss</th><th>DPO Loss</th><th>Time</th><th>Status</th>"
+    html += "</tr></thead><tbody>"
+
+    for r in sorted(results, key=lambda x: x.get("sft_final_loss") or float("inf")):
+        sft = f"{r['sft_final_loss']:.4f}" if r.get("sft_final_loss") is not None else "n/a"
+        dpo = f"{r['dpo_final_loss']:.4f}" if r.get("dpo_final_loss") is not None else "n/a"
+        elapsed = f"{r.get('elapsed_sec', 0):.0f}s"
+        chip = "chip-pass" if r.get("ok") else "chip-fail"
+        word = "OK" if r.get("ok") else "FAIL"
+        html += f'<tr><td><b>{r.get("variant_id", "?")}</b></td>'
+        html += f'<td>{r.get("model", "?")}</td>'
+        html += f'<td class="cell-val">{sft}</td>'
+        html += f'<td class="cell-val">{dpo}</td>'
+        html += f'<td>{elapsed}</td>'
+        html += f'<td><span class="chip {chip}">{word}</span></td></tr>'
+
+    html += "</tbody></table></div>"
+    return html
+
+
+def build_live_dashboard(results_path: Path, refresh_sec: int = 10) -> gr.Blocks:
+    """Live dashboard that auto-refreshes from forge_results.jsonl."""
+
+    def load_results() -> str:
+        if not results_path.exists():
+            return _build_live_html([])
+        results = []
+        for line in results_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    results.append(json.loads(line))
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        return _build_live_html(results)
+
+    with gr.Blocks(title="Forge Live", css=".gradio-container{max-width:900px!important}") as demo:
+        html_out = gr.HTML(load_results())
+        refresh_btn = gr.Button("Refresh")
+        refresh_btn.click(fn=load_results, outputs=html_out)
+        # Auto-refresh via timer
+        demo.load(fn=load_results, outputs=html_out, every=refresh_sec)
+
+    return demo
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Graduation dashboard.")
     parser.add_argument("--report", help="Path to graduation_report.json.")
     parser.add_argument("--saves-tag", help="Load from saves/<tag>/graduation_report.json.")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--share", action="store_true")
+    parser.add_argument("--live", action="store_true",
+                        help="Live mode: watch forge_results.jsonl and auto-refresh.")
+    parser.add_argument("--refresh-sec", type=int, default=10,
+                        help="Auto-refresh interval in seconds for live mode (default: 10).")
     args = parser.parse_args()
+
+    # Live mode — watch forge results
+    if args.live:
+        if not args.saves_tag:
+            parser.error("--live requires --saves-tag")
+            return 1
+        results_path = Path(f"saves/{args.saves_tag}/forge_results.jsonl")
+        print(f"Live dashboard watching: {results_path}")  # xray: ignore[PY-004]
+        demo = build_live_dashboard(results_path, refresh_sec=args.refresh_sec)
+        demo.launch(server_port=args.port, share=args.share)
+        return 0
 
     if args.report:
         report_path = Path(args.report)

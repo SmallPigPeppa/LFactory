@@ -114,6 +114,15 @@ def _dpo_config(student: str, dataset_name: str, tag: str, cpu_safe: bool) -> di
 def _merge_config(student: str, tag: str, has_dpo: bool = False) -> dict:
     adapter_path = f"saves/{tag}/lora/sft"
     if has_dpo:
+        dpo_path = f"saves/{tag}/lora/dpo"
+        # Validate adapter paths exist before writing merge config
+        if not Path(dpo_path).exists():
+            print(f"  WARNING: DPO adapter not found at {dpo_path} — merge will use SFT only")  # xray: ignore[PY-004]
+            has_dpo = False
+    if not Path(adapter_path).exists():
+        print(f"  WARNING: SFT adapter not found at {adapter_path} — merge may fail")  # xray: ignore[PY-004]
+
+    if has_dpo:
         adapter_path += f",saves/{tag}/lora/dpo"
     return {
         "model_name_or_path": student,
@@ -171,6 +180,8 @@ def main() -> int:
     parser.add_argument("--sft-dataset-name", default="", help="Override SFT dataset name in dataset_info.json.")
     parser.add_argument("--dpo-dataset-name", default="", help="Override DPO dataset name in dataset_info.json.")
     parser.add_argument("--specialists", nargs="*", help="Specialist model paths for DARE-TIES merge (optional).")
+    parser.add_argument("--auto-register", action="store_true", help="Auto-register datasets in data/dataset_info.json.")
+    parser.add_argument("--min-dpo-samples", type=int, default=20, help="Minimum DPO samples to include DPO training (default: 20).")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -187,7 +198,15 @@ def main() -> int:
     has_sft = sft_data.exists() and sft_data.stat().st_size > 0
     has_dpo = dpo_data.exists() and dpo_data.stat().st_size > 0
 
-    print(f"Purified data: SFT={'yes' if has_sft else 'NO'}, DPO={'yes' if has_dpo else 'NO'}")  # xray: ignore[PY-004]
+    # Weak DPO detection: if too few samples, skip DPO to avoid overfitting on noise
+    dpo_sample_count = 0
+    if has_dpo:
+        dpo_sample_count = sum(1 for line in dpo_data.read_text(encoding="utf-8").splitlines() if line.strip())
+        if dpo_sample_count < args.min_dpo_samples:
+            print(f"  Weak DPO detected: only {dpo_sample_count} samples (< {args.min_dpo_samples} minimum) — skipping DPO")  # xray: ignore[PY-004]
+            has_dpo = False
+
+    print(f"Purified data: SFT={'yes' if has_sft else 'NO'}, DPO={'yes' if has_dpo else 'NO'} ({dpo_sample_count} samples)")  # xray: ignore[PY-004]
 
     # Generate configs
     if has_sft:
@@ -205,6 +224,28 @@ def main() -> int:
     if args.specialists:
         dare_cfg = _dare_ties_config(args.student, args.tag, args.specialists)
         _write_yaml(dare_cfg, out_dir / f"{args.tag}_dare_ties.yaml", "Auto-generated DARE-TIES mergekit config")
+
+    # Auto-register datasets in dataset_info.json
+    if args.auto_register:
+        ds_path = Path("data/dataset_info.json")
+        try:
+            ds_info = json.loads(ds_path.read_text(encoding="utf-8")) if ds_path.exists() else {}
+        except (json.JSONDecodeError, ValueError):
+            ds_info = {}
+        if has_sft and sft_name not in ds_info:
+            ds_info[sft_name] = {
+                "file_name": str(sft_data),
+                "columns": {"prompt": "instruction", "response": "output"},
+            }
+            print(f"  Auto-registered: {sft_name}")  # xray: ignore[PY-004]
+        if has_dpo and dpo_name not in ds_info:
+            ds_info[dpo_name] = {
+                "file_name": str(dpo_data),
+                "ranking": True,
+                "columns": {"prompt": "prompt", "chosen": "chosen", "rejected": "rejected"},
+            }
+            print(f"  Auto-registered: {dpo_name}")  # xray: ignore[PY-004]
+        ds_path.write_text(json.dumps(ds_info, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     # Print dataset_info.json registration snippet
     print(f"\n=== Add to data/dataset_info.json ===")  # xray: ignore[PY-004]

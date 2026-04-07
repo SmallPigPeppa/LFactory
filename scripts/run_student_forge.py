@@ -143,6 +143,7 @@ def _generate_sft_yaml(
     template: str,
     cpu_safe: bool,
     out_dir: Path,
+    early_stop_patience: int = 0,
 ) -> Path:
     """Generate a per-variant SFT training YAML config."""
     cfg = {
@@ -176,6 +177,12 @@ def _generate_sft_yaml(
         "bf16": not cpu_safe,
         "fp16": False,
     }
+    if early_stop_patience > 0:
+        cfg["eval_strategy"] = "steps"
+        cfg["eval_steps"] = 50
+        cfg["load_best_model_at_end"] = True
+        cfg["metric_for_best_model"] = "eval_loss"
+        cfg["greater_is_better"] = False
     path = out_dir / f"{tag}_{variant_id}_sft.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -597,6 +604,10 @@ def main() -> int:
     parser.add_argument("--config-out-dir", default="examples/distillation/auto/forge", help="Dir for generated YAML configs.")
     parser.add_argument("--auto-parallel", action="store_true", help="Auto-detect GPU count and set max_parallel.")
     parser.add_argument("--dry-run", action="store_true", help="Print plan without training.")
+    parser.add_argument("--early-stop-patience", type=int, default=0,
+                        help="Enable LlamaFactory early stopping: halt after N eval steps with no loss improvement (0=disabled).")
+    parser.add_argument("--retry-variant", type=str, default="",
+                        help="Comma-separated variant IDs to force re-run (ignores completed state).")
     args = parser.parse_args()
 
     matrix = yaml.safe_load(Path(args.matrix).read_text(encoding="utf-8"))
@@ -640,6 +651,13 @@ def main() -> int:
     # ── Initialize forge state (auto-heal) ───────────────────────────────
     state = ForgeState(tag)  # xray: ignore[PY-004]
     previously_done = state.completed_ids()
+    # Handle --retry-variant: force re-run of specific variants
+    retry_set: set[str] = set()
+    if args.retry_variant:
+        retry_set = {v.strip() for v in args.retry_variant.split(",") if v.strip()}
+        previously_done -= retry_set
+        if retry_set:
+            print(f"Retry override: {', '.join(sorted(retry_set))} will be re-trained")  # xray: ignore[PY-004]
     if previously_done:  # xray: ignore[PY-004]
         print(f"\nAuto-heal: found {len(previously_done)} completed variant(s) from previous run:")  # xray: ignore[PY-004]
         for vid in sorted(previously_done):
@@ -682,7 +700,8 @@ def main() -> int:
     # ── Generate per-variant configs ─────────────────────────────────────
     variant_configs: dict[str, dict] = {}
     for vid, v in variants.items():
-        sft_yaml = _generate_sft_yaml(vid, v, tag, sft_ds_name, template, cpu_safe, config_out)
+        sft_yaml = _generate_sft_yaml(vid, v, tag, sft_ds_name, template, cpu_safe, config_out,
+                                       early_stop_patience=args.early_stop_patience)
         dpo_yaml = None
         if v.get("run_dpo") and dpo_data_path.exists() and dpo_data_path.stat().st_size > 0:  # xray: ignore[PY-004]
             dpo_yaml = _generate_dpo_yaml(vid, v, tag, dpo_ds_name, template, cpu_safe, config_out)

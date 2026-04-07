@@ -142,10 +142,13 @@ concurrently, then splitting outputs into consensus (SFT) and conflict (DPO) dat
 | `scripts/run_student_forge.py` | Parallel training of multiple student variants (Forge Matrix) |
 | `scripts/eval_student_panel.py` | Two-pass evaluation: quick quiz → deep exam |
 | `scripts/student_registry.py` | Persist eval scores and gap analysis across runs |
-| `scripts/slim_down.py` | GGUF export + speed benchmark of merged model |
-| `scripts/graduation_dashboard.py` | HTML dashboard with SVG verdict ring for eval results |
+| `scripts/slim_down.py` | GGUF export + speed benchmark + Pareto frontier |
+| `scripts/graduation_dashboard.py` | HTML dashboard with SVG verdict ring + live mode |
 | `scripts/benchmark_multi_teacher_dispatch.py` | A/B benchmark for dispatch modes |
 | `scripts/run_zena007_end_to_end.ps1` | Full pipeline orchestrator (sequential or Forge Matrix) |
+| `scripts/validate_datasets.py` | Data validation: duplicates, leakage, balance, DPO validity |
+| `scripts/prompt_difficulty.py` | Prompt difficulty scoring + histogram + filtering |
+| `scripts/bayesian_forge.py` | Bayesian hyperparameter search (Optuna TPE sampler) |
 
 #### Generation architecture (v4 — SPSC Ring-Buffer FIFO)
 
@@ -322,9 +325,10 @@ Local test suites (no GPU required):
 
 | Suite | Command | Tests |
 |-------|---------|-------|
-| Forge auto-heal | `pytest tests/test_forge_autoheal.py -v --noconftest` | 12 |
+| Forge auto-heal | `pytest tests/test_forge_autoheal.py -v --noconftest` | 16 |
+| Integration pipeline | `pytest tests/test_integration_pipeline.py -v --noconftest` | 26 |
 | Graduation eval (zen_core_libs) | `pytest zen_core_libs/llm/tests/test_eval.py -v` | 42 |
-| **Total** | | **54** |
+| **Total** | | **84** |
 
 ## Common Commands
 

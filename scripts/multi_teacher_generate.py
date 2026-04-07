@@ -457,6 +457,34 @@ def _resolve_decode_params(
     return eff_max_tokens, eff_temperature
 
 
+def _call_with_timeout(
+    query_fn: Callable[[dict, str, int, float], str],
+    teacher: dict,
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_sec: float,
+) -> str:
+    """Run query_fn in a daemon thread; raise TimeoutError if it doesn't finish."""
+    result_box: list[str | BaseException] = []
+
+    def _target() -> None:
+        try:
+            result_box.append(query_fn(teacher, prompt, max_tokens, temperature))
+        except Exception as exc:  # xray: ignore[QUAL-011]
+            result_box.append(exc)
+
+    th = threading.Thread(target=_target, daemon=True)
+    th.start()
+    th.join(timeout=timeout_sec)
+
+    if not result_box:
+        raise TimeoutError(f"Teacher {teacher.get('name', '?')} timed out after {timeout_sec}s")
+    if isinstance(result_box[0], BaseException):
+        raise result_box[0]  # xray: ignore[QUAL-011]
+    return str(result_box[0])
+
+
 def _run_teacher_inference(
     query_fn: Callable[[dict, str, int, float], str],
     teacher: dict,
@@ -464,11 +492,26 @@ def _run_teacher_inference(
     prompt_text: str,
     max_tokens: int,
     temperature: float,
+    timeout_sec: float = 0,
 ) -> tuple[dict, float]:  # xray: ignore[PY-004]
-    """Run one teacher query and normalize to the response payload schema."""
+    """Run one teacher query and normalize to the response payload schema.
+
+    If timeout_sec > 0, wraps the inference call in a thread with a deadline.
+    A hung teacher will be abandoned after timeout_sec seconds.
+    """
     t0 = time.time()
     try:
-        raw = query_fn(teacher, prompt_text, max_tokens, temperature)
+        if timeout_sec > 0:
+            raw = _call_with_timeout(query_fn, teacher, prompt_text, max_tokens, temperature, timeout_sec)
+        else:
+            raw = query_fn(teacher, prompt_text, max_tokens, temperature)
+    except TimeoutError:
+        elapsed = time.time() - t0
+        print(  # xray: ignore[PY-004]
+            f"  TIMEOUT [{teacher['name']}] on '{sample_id}' after {elapsed:.0f}s",
+            file=sys.stderr, flush=True,
+        )
+        raw = ""
     except Exception as exc:  # xray: ignore[QUAL-011]
         print(f"  ERROR [{teacher['name']}] on '{sample_id}': {exc}", file=sys.stderr, flush=True)  # xray: ignore[PY-004]
         raw = ""
@@ -649,6 +692,7 @@ def main() -> int:
     )  # xray: ignore[PY-004]
     parser.add_argument("--ram-pause-pct", type=float, default=12.0, help="Pause workers when available RAM drops below this %% (default 12).")
     parser.add_argument("--ram-resume-pct", type=float, default=22.0, help="Resume workers when available RAM rises above this %% (default 22).")
+    parser.add_argument("--teacher-timeout", type=float, default=0, help="Per-prompt timeout in seconds per teacher (0 = no timeout). Kills hung inference.")
     args = parser.parse_args()
 
     if args.fifo_size < 0:
@@ -726,6 +770,7 @@ def main() -> int:
     checkpoint_dir = out_path.parent / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     CHECKPOINT_EVERY = 10  # save every N prompts per teacher
+    CHECKPOINT_BATCH_SIZE = 50  # buffer this many before flushing to disk
 
     def _ckpt_path(t_name: str) -> Path:
         safe = re.sub(r"[^a-zA-Z0-9_-]", "_", t_name)
@@ -747,11 +792,31 @@ def main() -> int:
                 data[row["id"]] = row["response"]
         return data
 
+    # Buffered checkpoint writes — reduce disk I/O from 1 write/prompt to 1 write/batch
+    _ckpt_buffer: dict[str, list[str]] = {}  # teacher_name -> list of JSON lines
+
     def _append_checkpoint(t_name: str, sample_id: str, response: dict) -> None:
-        """Append one result to the teacher's checkpoint file."""
+        """Buffer checkpoint writes and flush every CHECKPOINT_BATCH_SIZE items."""
+        line = json.dumps({"id": sample_id, "response": response}, ensure_ascii=False) + "\n"
+        buf = _ckpt_buffer.setdefault(t_name, [])
+        buf.append(line)
+        if len(buf) >= CHECKPOINT_BATCH_SIZE:
+            _flush_checkpoint(t_name)
+
+    def _flush_checkpoint(t_name: str) -> None:
+        """Flush buffered checkpoint lines to disk."""
+        buf = _ckpt_buffer.get(t_name, [])
+        if not buf:
+            return
         p = _ckpt_path(t_name)
         with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"id": sample_id, "response": response}, ensure_ascii=False) + "\n")
+            f.writelines(buf)
+        buf.clear()
+
+    def _flush_all_checkpoints() -> None:
+        """Flush all buffered checkpoints (call at end of generation)."""
+        for t_name in list(_ckpt_buffer.keys()):
+            _flush_checkpoint(t_name)
 
     # -------------------------------------------------------------------
     # Teacher-first generation: process ALL prompts per teacher to avoid
@@ -936,6 +1001,7 @@ def main() -> int:
                     prompt_text,
                     eff_max_tokens,
                     eff_temperature,
+                    timeout_sec=args.teacher_timeout,
                 )
                 teacher_timings[t_name].append(elapsed)
 
@@ -1037,6 +1103,8 @@ def main() -> int:
 
     else:
         print("Dispatch mode: teacher-sequential", flush=True)  # xray: ignore[PY-004]
+        total_remaining = sum(remaining_counts.values())
+        seq_start = time.time()
         # Original teacher-first sequential execution
         for t_idx, teacher in enumerate(teachers):
             t_name = teacher["name"]
@@ -1069,6 +1137,7 @@ def main() -> int:
                     prompt_text,
                     eff_max_tokens,  # xray: ignore[PY-004]
                     eff_temperature,
+                    timeout_sec=args.teacher_timeout,
                 )
                 all_teacher_responses[t_name][sample_id] = resp
                 _append_checkpoint(t_name, sample_id, resp)
@@ -1076,7 +1145,15 @@ def main() -> int:
                 teacher_done += 1
 
                 if total_calls % 10 == 0 or total_calls <= 3:
-                    print(f"  [{t_name}] {teacher_done}/{remaining_counts[t_name]} '{sample_id}' {elapsed:.1f}s", flush=True)  # xray: ignore[PY-004]
+                    pct = total_calls / total_remaining * 100 if total_remaining > 0 else 100
+                    elapsed_so_far = time.time() - seq_start
+                    avg_per_call = elapsed_so_far / total_calls if total_calls > 0 else 0
+                    eta_sec = avg_per_call * (total_remaining - total_calls)
+                    eta_str = time.strftime("%H:%M:%S", time.gmtime(max(0, eta_sec)))
+                    print(f"  [{t_name}] {teacher_done}/{remaining_counts[t_name]} ({pct:.0f}%) '{sample_id}' {elapsed:.1f}s | ETA {eta_str}", flush=True)  # xray: ignore[PY-004]
+
+    # Flush any remaining buffered checkpoints before merge
+    _flush_all_checkpoints()
 
     # Assemble final output: one row per prompt with all teacher responses
     results: list[dict] = []

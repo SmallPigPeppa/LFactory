@@ -35,11 +35,53 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
 from collections import Counter
 from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# SimHash — O(1) similarity estimation replacing O(n²) all-pairs n-gram
+# ---------------------------------------------------------------------------
+
+_SIMHASH_BITS = 64
+
+
+def _simhash(text: str, n: int = 3) -> int:
+    """Compute a SimHash fingerprint for fast similarity estimation."""
+    text = re.sub(r"\s+", " ", text.lower().strip())
+    v = [0] * _SIMHASH_BITS
+    for i in range(max(1, len(text) - n + 1)):
+        token = text[i : i + n]
+        h = int(hashlib.md5(token.encode(), usedforsecurity=False).hexdigest()[:16], 16)
+        for bit in range(_SIMHASH_BITS):
+            if h & (1 << bit):
+                v[bit] += 1
+            else:
+                v[bit] -= 1
+    fp = 0
+    for bit in range(_SIMHASH_BITS):
+        if v[bit] > 0:
+            fp |= (1 << bit)
+    return fp
+
+
+def _simhash_distance(a: int, b: int) -> int:
+    """Hamming distance between two SimHash fingerprints (0 = identical)."""
+    return bin(a ^ b).count("1")
+
+
+def _simhash_similarity(a: str, b: str) -> float:
+    """SimHash-based similarity (0.0-1.0). Much faster than Jaccard n-gram."""
+    if not a.strip() or not b.strip():
+        return 0.0
+    ha = _simhash(a)
+    hb = _simhash(b)
+    dist = _simhash_distance(ha, hb)
+    return max(0.0, 1.0 - dist / _SIMHASH_BITS)
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +166,10 @@ def _check_reasoning_alignment(
     agreeing_teachers: list[str],
     threshold: float,
 ) -> bool:
-    """Check if reasoning traces of agreeing teachers are sufficiently similar."""
+    """Check if reasoning traces of agreeing teachers are sufficiently similar.
+
+    Uses SimHash for O(1) per-pair similarity (replaces O(n²m) n-gram Jaccard).
+    """
     thoughts = [teacher_data[t].get("thought", "") for t in agreeing_teachers]
     # Filter out empty thoughts
     thoughts = [t for t in thoughts if t.strip()]
@@ -133,11 +178,11 @@ def _check_reasoning_alignment(
         # Can't compare — treat as aligned (benefit of the doubt)
         return True
 
-    # All-pairs similarity check
+    # All-pairs similarity check (SimHash = O(n²) pairs but O(1) per pair)
     similarities: list[float] = []
     for i in range(len(thoughts)):
         for j in range(i + 1, len(thoughts)):
-            sim = _ngram_similarity(thoughts[i], thoughts[j])
+            sim = _simhash_similarity(thoughts[i], thoughts[j])
             similarities.append(sim)
 
     avg_sim = sum(similarities) / len(similarities) if similarities else 0.0
@@ -187,6 +232,14 @@ def classify_sample(
     # Majority exists — check reasoning alignment
     reasoning_aligned = _check_reasoning_alignment(teacher_data, agreeing, reason_threshold)
 
+    # Confidence score = agreement strength (0-1)
+    n_total = len(teacher_data)
+    n_agree = len(agreeing)
+    confidence = n_agree / n_total if n_total > 0 else 0.0
+
+    # Prompt difficulty = 1 - confidence (easy prompts -> high confidence -> low difficulty)
+    difficulty = round(1.0 - confidence, 4)
+
     # Pick best response from agreeing teachers (longest non-empty)
     best_teacher = max(agreeing, key=lambda t: len(teacher_data[t].get("raw", "")))
     best_response = teacher_data[best_teacher].get("raw", teacher_data[best_teacher].get("answer", ""))
@@ -200,6 +253,9 @@ def classify_sample(
             "source_teacher": best_teacher,
             "agreeing_teachers": agreeing,
             "tier": "GOLD",
+            "confidence": round(confidence, 4),
+            "n_teachers_agree": n_agree,
+            "difficulty": difficulty,
         }
     else:
         # SILVER — answer agrees but reasoning differs → DPO pair
@@ -226,6 +282,9 @@ def classify_sample(
             "chosen_teacher": best_teacher,
             "rejected_teacher": reject_teacher,
             "tier": "SILVER",
+            "confidence": round(confidence, 4),
+            "n_teachers_agree": n_agree,
+            "difficulty": difficulty,
         }
 
 

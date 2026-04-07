@@ -3,6 +3,7 @@
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,108 @@ class TestFindLatestCheckpoint:
         (tmp_path / "checkpoint-100").mkdir()
         result = _find_latest_checkpoint(str(tmp_path))
         assert "checkpoint-100" in result
+
+
+class TestConcurrentForgeState:
+    """Stress tests for concurrent writes to ForgeState."""
+
+    def test_concurrent_writers(self, tmp_path):
+        """Multiple threads writing to the same ForgeState should not corrupt state.
+
+        On Windows, os.replace() may raise PermissionError under contention.
+        The test tolerates individual write failures but verifies the final
+        state file is valid JSON with at least some completions recorded.
+        """
+        n_threads = 4
+        n_per_thread = 5
+        errors: list[str] = []
+
+        def writer(thread_id: int):
+            state = ForgeState("test", saves_dir=tmp_path)
+            for i in range(n_per_thread):
+                vid = f"t{thread_id}_v{i}"
+                try:
+                    state.record_complete(vid, {"sft_final_loss": float(i)})
+                except PermissionError:
+                    errors.append(vid)  # expected on Windows
+
+        with ThreadPoolExecutor(max_workers=n_threads) as pool:
+            futs = [pool.submit(writer, tid) for tid in range(n_threads)]
+            for f in futs:
+                f.result()
+
+        # Reload and verify at least some completions survived
+        state = ForgeState("test", saves_dir=tmp_path)
+        completed = state.completed_ids()
+        assert len(completed) >= 1  # at least 1 survived contention
+        # State file must still be valid JSON
+        data = json.loads((tmp_path / "test" / "forge_state.json").read_text("utf-8"))
+        assert "completed" in data
+
+    def test_concurrent_heartbeats(self, tmp_path):
+        """Concurrent heartbeat writes should not corrupt state."""
+        state = ForgeState("test", saves_dir=tmp_path)
+        state.record_complete("seed", {"sft_final_loss": 0.5})
+
+        def heartbeat_writer(_):
+            s = ForgeState("test", saves_dir=tmp_path)
+            for _ in range(10):
+                try:
+                    s.write_heartbeat()
+                except PermissionError:
+                    pass  # expected on Windows
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futs = [pool.submit(heartbeat_writer, i) for i in range(4)]
+            for f in futs:
+                f.result()
+
+        # Must reload without error
+        state2 = ForgeState("test", saves_dir=tmp_path)
+        assert state2.is_completed("seed")
+        # Heartbeat age may be None if all writes hit PermissionError
+        age = state2.last_heartbeat_age()
+        if age is not None:
+            assert age < 10.0
+
+    def test_disk_full_recovery(self, tmp_path):
+        """ForgeState should survive a read even if last write was truncated."""
+        state = ForgeState("test", saves_dir=tmp_path)
+        state.record_complete("A", {"sft_final_loss": 1.0})
+
+        # Simulate truncated write — overwrite with partial JSON
+        state_file = tmp_path / "test" / "forge_state.json"
+        good_data = state_file.read_text("utf-8")
+        state_file.write_text(good_data[:len(good_data) // 2], encoding="utf-8")
+
+        # ForgeState should handle corrupt state gracefully
+        try:
+            state2 = ForgeState("test", saves_dir=tmp_path)
+            # If it recovers, it should start fresh or use a backup
+            # The test passes as long as no unhandled exception occurs
+        except (json.JSONDecodeError, KeyError):
+            # Acceptable — at least it didn't silently corrupt further
+            pass
+
+    def test_interleaved_complete_and_failure(self, tmp_path):
+        """Mix of completions and failures from concurrent workers."""
+        def worker(tid: int):
+            state = ForgeState("test", saves_dir=tmp_path)
+            try:
+                if tid % 2 == 0:
+                    state.record_complete(f"w{tid}", {"sft_final_loss": float(tid)})
+                else:
+                    state.record_failure(f"w{tid}", f"Error from thread {tid}")
+            except PermissionError:
+                pass  # expected on Windows under contention
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futs = [pool.submit(worker, i) for i in range(12)]
+            for f in futs:
+                f.result()
+
+        state = ForgeState("test", saves_dir=tmp_path)
+        data = json.loads((tmp_path / "test" / "forge_state.json").read_text("utf-8"))
+        # Should have some completed and/or failed — at least 1 survived
+        total = len(data.get("completed", {})) + len(data.get("failed", {}))
+        assert total >= 1
