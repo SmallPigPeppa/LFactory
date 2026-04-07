@@ -1046,6 +1046,19 @@ register_template(
 )
 
 
+# text-only template for gemma4 (no mm_plugin) — useful for SFT/DPO on text datasets with RTX 2080 Ti
+register_template(
+    name="gemma4_text",
+    format_user=StringFormatter(slots=["<|turn>user\n{{content}}<turn|>\n<|turn>model\n"]),
+    format_assistant=StringFormatter(slots=["{{content}}<turn|>\n"]),
+    format_system=StringFormatter(slots=["<|turn>system\n{{content}}<turn|>\n"]),
+    format_prefix=EmptyFormatter(slots=[{"bos_token"}]),
+    stop_words=["<turn|>"],
+    default_system="You are a helpful assistant.",
+    replace_eos=True,
+)
+
+
 register_template(
     name="glm4",
     format_user=StringFormatter(slots=["<|user|>\n{{content}}<|assistant|>"]),
