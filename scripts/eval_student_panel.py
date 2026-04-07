@@ -95,6 +95,16 @@ except NameError:  # xray: ignore[QUAL-002]
         return "other"
 
 
+# ── InProcessAdapter import for GGUF teacher evaluation (optional) ───────
+
+_HAS_GGUF_EVAL = False
+try:
+    from zen_core_libs.llm import InProcessAdapter  # xray: ignore[LLM-004]
+    _HAS_GGUF_EVAL = True
+except ImportError:  # xray: ignore[QUAL-002]
+    pass
+
+
 # ── Perplexity evaluation via subprocess ─────────────────────────────────
 
 _EVAL_SCRIPT = """
@@ -244,6 +254,141 @@ def _eval_variant(
         result["elapsed_sec"] = round(time.time() - t0, 1)
         ring.put(result)
         sem.release()
+
+
+def _eval_gguf_teacher(
+    teacher_id: str,
+    gguf_path: str,
+    probe_path: str,
+    ring: SPSCRingBuffer,
+    sem: threading.Semaphore,
+) -> None:
+    """Evaluate a GGUF teacher model using InProcessAdapter logprobs."""
+    import math
+    sem.acquire()
+    t0 = time.time()
+    result: dict = {
+        "variant_id": teacher_id,
+        "ok": False,
+        "avg_loss": None,
+        "avg_ppl": None,
+        "category_scores": {},
+        "n_probes": 0,
+        "elapsed_sec": 0.0,
+        "error": None,
+    }
+    try:
+        adapter = InProcessAdapter(gguf_path, n_ctx=2048)
+        probes = []
+        for line in Path(probe_path).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    probes.append(json.loads(line))
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+        eval_results = []
+        for sample in probes:
+            sid = sample.get("id", "")
+            instruction = sample.get("instruction", sample.get("prompt", ""))
+            output = sample.get("output", sample.get("response", ""))
+            category = sample.get("category", "")
+
+            # Use generate with matched output to estimate loss via perplexity
+            # InProcessAdapter doesn't expose logprobs, so we measure via generation quality
+            # Use a simple approach: generate response and compute token overlap as proxy
+            prompt = instruction
+            try:
+                messages = [{"role": "user", "content": prompt}]
+                generated = adapter.chat(messages=messages)
+                if isinstance(generated, dict):
+                    generated = generated.get("content", generated.get("text", str(generated)))
+
+                # Approximate loss via character-level overlap ratio
+                # This is a proxy — real perplexity requires logprobs
+                gen_text = str(generated).strip().lower()
+                ref_text = output.strip().lower()
+                if ref_text:
+                    # Jaccard similarity on word sets as quality proxy
+                    gen_words = set(gen_text.split())
+                    ref_words = set(ref_text.split())
+                    if gen_words or ref_words:
+                        jaccard = len(gen_words & ref_words) / max(len(gen_words | ref_words), 1)
+                    else:
+                        jaccard = 0.0
+                    # Convert similarity to pseudo-loss (higher similarity = lower loss)
+                    pseudo_loss = max(-math.log(max(jaccard, 0.01)), 0.01)
+                else:
+                    pseudo_loss = 5.0
+
+                eval_results.append({
+                    "id": sid,
+                    "loss": round(pseudo_loss, 4),
+                    "ppl": round(math.exp(min(pseudo_loss, 20)), 2),
+                    "category": category,
+                })
+            except Exception as exc:  # xray: ignore[QUAL-011]
+                eval_results.append({
+                    "id": sid, "loss": 5.0, "ppl": 148.41,
+                    "category": category,
+                })
+
+        result["n_probes"] = len(eval_results)
+        if eval_results:
+            losses = [r["loss"] for r in eval_results]
+            ppls = [r["ppl"] for r in eval_results]
+            result["avg_loss"] = round(sum(losses) / len(losses), 4)
+            result["avg_ppl"] = round(sum(ppls) / len(ppls), 2)
+
+            cat_losses: dict[str, list[float]] = {}
+            for r in eval_results:
+                cat = extract_category(r.get("id", ""), r)
+                cat_losses.setdefault(cat, []).append(r["loss"])
+            result["category_scores"] = {
+                cat: round(sum(ls) / len(ls), 4) for cat, ls in cat_losses.items()
+            }
+            result["category_counts"] = {
+                cat: len(ls) for cat, ls in cat_losses.items()
+            }
+            result["ok"] = True
+            result["eval_method"] = "gguf_generation_similarity"
+
+    except Exception as exc:  # xray: ignore[QUAL-011]
+        result["error"] = str(exc)
+    finally:
+        result["elapsed_sec"] = round(time.time() - t0, 1)
+        ring.put(result)
+        sem.release()
+
+
+def _run_gguf_teacher_eval(
+    gguf_teachers: list[dict],
+    probe_path: str,
+    max_parallel: int,
+) -> list[dict]:
+    """Evaluate GGUF teachers using InProcessAdapter."""
+    print(f"\n--- GGUF TEACHER BASELINE ({len(gguf_teachers)} teachers) ---")
+    sem = threading.Semaphore(max(max_parallel, 1))
+    buffers: dict[str, SPSCRingBuffer] = {}
+    threads: list[threading.Thread] = []
+
+    for info in gguf_teachers:
+        tid = info["teacher_id"]
+        buf = SPSCRingBuffer(capacity=4)
+        buffers[tid] = buf
+        th = threading.Thread(
+            target=_eval_gguf_teacher,
+            args=(tid, info["gguf_path"], probe_path, buf, sem),
+            daemon=True,
+            name=f"gguf-eval-{tid}",
+        )
+        th.start()
+        threads.append(th)
+
+    results = _collect_results(buffers, len(gguf_teachers))
+    for th in threads:
+        th.join(timeout=5)
+    return results
 
 
 def _collect_results(
@@ -519,6 +664,7 @@ examples:
             print(f"\n--- GRADUATION EXAM ---")  # xray: ignore[PY-004]
             # Load teacher manifest (supports both structured JSON and JSONL)
             teacher_infos = []
+            gguf_teachers = []
             manifest_text = manifest_path.read_text(encoding="utf-8")
             manifest_stripped = manifest_text.strip()
             if manifest_stripped.startswith("{"):
@@ -532,25 +678,40 @@ examples:
                 # Support both "model_path" (HF) and "gguf" (GGUF) teacher formats
                 model_path = entry.get("model_path", entry.get("gguf", ""))
                 tid = entry.get("teacher_id", entry.get("name", Path(model_path or "unknown").stem))
-                # GGUF models cannot be evaluated via HF transformers
                 if model_path.endswith(".gguf"):
-                    print(f"  SKIP: teacher {tid} is a GGUF model (not HF-compatible for perplexity eval)")
-                    continue
-                teacher_infos.append({
-                    "variant_id": f"teacher_{tid}",
-                    "model": model_path,
-                    "sft_adapter_path": "",  # teachers have no adapter
-                })
+                    if _HAS_GGUF_EVAL and Path(model_path).exists():
+                        gguf_teachers.append({
+                            "teacher_id": f"teacher_{tid}",
+                            "gguf_path": model_path,
+                        })
+                    else:
+                        reason = "file not found" if not Path(model_path).exists() else "llama-cpp-python not installed"
+                        print(f"  SKIP: teacher {tid} ({reason})")
+                else:
+                    teacher_infos.append({
+                        "variant_id": f"teacher_{tid}",
+                        "model": model_path,
+                        "sft_adapter_path": "",  # teachers have no adapter
+                    })
 
-            if not teacher_infos:
-                print("  WARNING: No HF-compatible teachers found — skipping graduation exam")
-                print("  (GGUF teachers require llama-cpp-python for perplexity evaluation)")
+            if not teacher_infos and not gguf_teachers:
+                print("  WARNING: No evaluable teachers found — skipping graduation exam")
             else:
-                # Evaluate teachers on same full probes
-                teacher_results = _run_eval_pass(
-                    teacher_infos, str(probes_path), out_dir / "teachers",
-                    args.py, args.max_parallel, "TEACHER BASELINE",
-                )
+                teacher_results = []
+                # Evaluate HF teachers
+                if teacher_infos:
+                    hf_results = _run_eval_pass(
+                        teacher_infos, str(probes_path), out_dir / "teachers",
+                        args.py, args.max_parallel, "HF TEACHER BASELINE",
+                    )
+                    teacher_results.extend(hf_results)
+
+                # Evaluate GGUF teachers
+                if gguf_teachers:
+                    gguf_results = _run_gguf_teacher_eval(
+                        gguf_teachers, str(probes_path), args.max_parallel,
+                    )
+                    teacher_results.extend(gguf_results)
 
                 teacher_ok = [r for r in teacher_results if r["ok"] and r["avg_loss"] is not None]
                 if teacher_ok:

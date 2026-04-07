@@ -17,14 +17,16 @@
 
 Runs all distillation pipeline stages in sequence:
   1. Generate multi-teacher responses
-  2. Purify into consensus (SFT) / conflict (DPO) splits
+  2. Purify into consensus (SFT) / conflict (DPO) splits (+synthetic DPO)
   3. Validate datasets
   4. Auto-generate training configs
-  5. Train SFT → [DPO if samples]
+  5. Train SFT → [DPO if samples] (auto-resume incomplete training)
   6. Merge adapters
   7. Recover + synthesize forge results (bridge sequential → eval)
-  8. Evaluate student (two-pass: quick quiz → deep exam)
+  8. Evaluate student (two-pass: quick quiz → deep exam) + GGUF teacher eval
   9. Graduation dashboard
+  10. GGUF export + speed benchmark
+  11. Qualitative eval (sample generation comparison)
 
   OR: Student Forge Matrix (parallel training) for stages 5-6.
 
@@ -138,6 +140,27 @@ def _get_final_loss(trainer_log: str | Path) -> float | None:
         return None
 
 
+def _is_training_complete(adapter_dir: str | Path) -> bool:
+    """Check if training ran to completion by reading trainer_log.jsonl."""
+    log_path = Path(adapter_dir) / "trainer_log.jsonl"
+    if not log_path.exists():
+        return False
+    last_line = None
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and stripped.startswith("{"):
+            last_line = stripped
+    if not last_line:
+        return False
+    try:
+        entry = json.loads(last_line)
+        current = entry.get("current_steps", 0)
+        total = entry.get("total_steps", 0)
+        return current >= total and total > 0
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return False
+
+
 def _synthesize_forge_results(
     tag: str,
     student_model: str,
@@ -176,6 +199,76 @@ def _synthesize_forge_results(
     return True
 
 
+# ── Qualitative eval inline script ──────────────────────────────────────
+_QUALITATIVE_EVAL_SCRIPT = r'''
+import json, sys, collections
+from pathlib import Path
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+merged_dir = sys.argv[1]
+probe_path = sys.argv[2]
+out_path = sys.argv[3]
+
+tokenizer = AutoTokenizer.from_pretrained(merged_dir, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    merged_dir, trust_remote_code=True, torch_dtype=torch.float32, device_map="cpu"
+)
+model.eval()
+
+# Group probes by category, pick up to 3 per category (max 12 total)
+probes = []
+for line in Path(probe_path).read_text(encoding="utf-8").splitlines():
+    if line.strip():
+        try:
+            probes.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+
+by_cat = collections.defaultdict(list)
+for p in probes:
+    cat = p.get("category", "other")
+    by_cat[cat].append(p)
+
+selected = []
+for cat, samples in sorted(by_cat.items()):
+    selected.extend(samples[:3])
+if len(selected) > 12:
+    selected = selected[:12]
+
+results = []
+for sample in selected:
+    instruction = sample.get("instruction", sample.get("prompt", ""))
+    reference = sample.get("output", sample.get("response", ""))
+    category = sample.get("category", "other")
+
+    messages = [{"role": "user", "content": instruction}]
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+
+    with torch.no_grad():
+        out_ids = model.generate(
+            **inputs, max_new_tokens=256, do_sample=False,
+            pad_token_id=tokenizer.eos_token_id
+        )
+    generated = tokenizer.decode(out_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+
+    results.append({
+        "id": sample.get("id", ""),
+        "category": category,
+        "prompt": instruction[:200],
+        "reference": reference[:300],
+        "generated": generated[:300],
+    })
+
+Path(out_path).write_text(
+    "\n".join(json.dumps(r, ensure_ascii=False) for r in results) + "\n",
+    encoding="utf-8",
+)
+print(f"Qualitative eval: {len(results)} samples written to {out_path}")
+'''
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Cross-platform pipeline orchestrator for multi-teacher distillation.",
@@ -199,6 +292,9 @@ examples:
     parser.add_argument("--skip-merge", action="store_true", help="Skip merge step.")
     parser.add_argument("--skip-eval", action="store_true", help="Skip evaluation step.")
     parser.add_argument("--skip-dashboard", action="store_true", help="Skip dashboard step.")
+    parser.add_argument("--skip-gguf", action="store_true", help="Skip GGUF export step.")
+    parser.add_argument("--skip-qualitative", action="store_true", help="Skip qualitative eval step.")
+    parser.add_argument("--gguf-quants", nargs="*", default=["Q4_K_M"], help="GGUF quant levels (default: Q4_K_M).")
     parser.add_argument("--use-forge", action="store_true", help="Use Student Forge Matrix (parallel).")
     parser.add_argument("--forge-matrix", default="", help="Forge matrix YAML path.")
     parser.add_argument("--cpu-safe", action="store_true", help="CPU-only mode (disable bf16).")
@@ -255,12 +351,15 @@ examples:
         print(f"[SKIP] Purification: report already exists")  # xray: ignore[PY-004]
         steps_skipped += 1
     else:
-        code = _run_step("Purify teacher outputs", [
+        purify_cmd = [
             py, str(scripts / "purify_teacher_outputs.py"),
             "--input", responses,
             "--out-dir", purified_dir,
             "--resume",
-        ], dry_run=dry)
+            "--synthetic-dpo",
+            "--synthetic-dpo-max", "200",
+        ]
+        code = _run_step("Purify teacher outputs", purify_cmd, dry_run=dry)
         if code != 0:
             print("FATAL: Purification failed. Check that the input file is valid JSONL:")  # xray: ignore[PY-004]
             print(f"  {responses}")  # xray: ignore[PY-004]
@@ -323,8 +422,18 @@ examples:
             print("[SKIP] Training: --skip-train")  # xray: ignore[PY-004]
             steps_skipped += 1
         else:
-            # SFT
-            if _file_nonempty(sft_cfg):
+            # SFT — detect incomplete training and resume
+            sft_adapter_dir_check = f"saves/{tag}/lora/sft"
+            sft_done = (
+                _find_latest_checkpoint(sft_adapter_dir_check) is not None
+                and _is_training_complete(sft_adapter_dir_check)
+            )
+            if sft_done:
+                print(f"[SKIP] SFT: training complete (all steps finished)")  # xray: ignore[PY-004]
+                steps_skipped += 1
+            elif _file_nonempty(sft_cfg):
+                if _find_latest_checkpoint(sft_adapter_dir_check) is not None:
+                    print(f"[RESUME] SFT: incomplete training detected — resuming from checkpoint")  # xray: ignore[PY-004]
                 code = _run_step("SFT Training", [
                     py, "-m", "llamafactory.cli", "train", sft_cfg,
                 ], dry_run=dry)
@@ -445,6 +554,73 @@ examples:
         print("[SKIP] Dashboard: no evaluation results")
         steps_skipped += 1
 
+    # ── Stage 10: GGUF Export + Speed Benchmark ──────────────────────────
+    gguf_results = f"saves/{tag}/gguf/slim_down_results.jsonl"
+    champion_path = f"saves/{tag}/champion.txt"
+
+    if args.skip_gguf:
+        print("[SKIP] GGUF export: --skip-gguf")
+        steps_skipped += 1
+    elif _file_nonempty(gguf_results):
+        print(f"[SKIP] GGUF export: {gguf_results} already exists")
+        steps_skipped += 1
+    elif not _file_nonempty(champion_path):
+        print(f"[SKIP] GGUF export: no champion.txt (run eval first)")
+        steps_skipped += 1
+    else:
+        gguf_cmd = [
+            py, str(scripts / "slim_down.py"),
+            "--saves-tag", tag,
+            "--quants", *args.gguf_quants,
+        ]
+        # Add speed benchmark probes if available
+        if _file_nonempty(eval_probes):
+            gguf_cmd.extend(["--probes", eval_probes, "--bench-count", "5"])
+        code = _run_step("GGUF export + speed benchmark", gguf_cmd, dry_run=dry)
+        if code != 0:
+            print("WARNING: GGUF export had failures (non-fatal — continuing)")
+        steps_run += 1
+
+    # ── Stage 11: Qualitative Eval ───────────────────────────────────────
+    qualitative_path = f"saves/{tag}/qualitative_eval.jsonl"
+
+    if args.skip_qualitative:
+        print("[SKIP] Qualitative eval: --skip-qualitative")
+        steps_skipped += 1
+    elif _file_nonempty(qualitative_path):
+        print(f"[SKIP] Qualitative eval: {qualitative_path} already exists")
+        steps_skipped += 1
+    elif not _file_nonempty(f"{merged_dir}/config.json"):
+        print(f"[SKIP] Qualitative eval: no merged model at {merged_dir}")
+        steps_skipped += 1
+    elif not _file_nonempty(eval_probes):
+        print(f"[SKIP] Qualitative eval: no eval probes")
+        steps_skipped += 1
+    else:
+        # Pick representative probes (up to 3 per category, max 12 total)
+        qual_cmd = [
+            py, "-c",
+            _QUALITATIVE_EVAL_SCRIPT,
+            merged_dir, eval_probes, qualitative_path,
+        ]
+        code = _run_step("Qualitative eval (sample generation)", qual_cmd, dry_run=dry)
+        if code != 0:
+            print("WARNING: Qualitative eval failed (non-fatal)")
+        else:
+            # Print a summary
+            if _file_nonempty(qualitative_path) and not dry:
+                try:
+                    samples = [json.loads(l) for l in Path(qualitative_path).read_text(encoding="utf-8").splitlines() if l.strip()]
+                    print(f"\n  Qualitative eval: {len(samples)} samples generated")
+                    for s in samples[:3]:
+                        prompt_preview = s.get("prompt", "")[:60]
+                        gen_preview = s.get("generated", "")[:60]
+                        print(f"    [{s.get('category', '?')}] {prompt_preview}...")
+                        print(f"      → {gen_preview}...")
+                except Exception:
+                    pass
+        steps_run += 1
+
     # ── Summary ──────────────────────────────────────────────────────────
     status = "FAILED" if failed else "complete"
     print(f"\n{'='*60}")  # xray: ignore[PY-004]
@@ -457,6 +633,8 @@ examples:
         (f"saves/{tag}/champion.txt", "Champion"),
         (f"saves/{tag}/graduation_report.json", "Graduation report"),
         (f"{merged_dir}/config.json", "Merged model"),
+        (f"saves/{tag}/gguf/slim_down_results.jsonl", "GGUF export"),
+        (f"saves/{tag}/qualitative_eval.jsonl", "Qualitative eval"),
     ]
     found = [(label, path) for path, label in artifacts if _file_nonempty(path)]
     if found:

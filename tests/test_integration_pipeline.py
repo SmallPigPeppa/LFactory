@@ -338,3 +338,66 @@ class TestOrchestratorRecovery:
         ok = orch._synthesize_forge_results("test", "model/test", str(tmp_path / "empty"), forge_path)
         assert ok is False
         assert not forge_path.exists()
+
+    def test_is_training_complete_true(self, tmp_path):
+        """Complete training (current_steps == total_steps) returns True."""
+        orch = self._import_orchestrator()
+        log = tmp_path / "trainer_log.jsonl"
+        log.write_text(
+            '{"current_steps": 100, "total_steps": 230, "loss": 1.5}\n'
+            '{"current_steps": 230, "total_steps": 230, "loss": 0.8}\n',
+            encoding="utf-8",
+        )
+        assert orch._is_training_complete(tmp_path) is True
+
+    def test_is_training_complete_false(self, tmp_path):
+        """Incomplete training (current_steps < total_steps) returns False."""
+        orch = self._import_orchestrator()
+        log = tmp_path / "trainer_log.jsonl"
+        log.write_text(
+            '{"current_steps": 100, "total_steps": 230, "loss": 1.5}\n'
+            '{"current_steps": 220, "total_steps": 230, "loss": 1.2}\n',
+            encoding="utf-8",
+        )
+        assert orch._is_training_complete(tmp_path) is False
+
+    def test_is_training_complete_no_log(self, tmp_path):
+        """No trainer_log.jsonl returns False."""
+        orch = self._import_orchestrator()
+        assert orch._is_training_complete(tmp_path) is False
+
+    def test_qualitative_script_defined(self):
+        """Qualitative eval script constant is defined and non-empty."""
+        orch = self._import_orchestrator()
+        assert hasattr(orch, "_QUALITATIVE_EVAL_SCRIPT")
+        assert len(orch._QUALITATIVE_EVAL_SCRIPT) > 100
+        assert "AutoModelForCausalLM" in orch._QUALITATIVE_EVAL_SCRIPT
+
+
+class TestGenDistillConfigs:
+    """Tests for gen_distill_configs.py resume-safe config generation."""
+
+    def _import_gen(self):
+        sys.path.insert(0, str(_SCRIPTS_DIR))
+        import importlib
+        import gen_distill_configs
+        importlib.reload(gen_distill_configs)
+        return gen_distill_configs
+
+    def test_sft_config_overwrite_false(self):
+        """SFT config should set overwrite_output_dir=False for resume."""
+        gen = self._import_gen()
+        cfg = gen._sft_config("model/test", "ds", "tag", cpu_safe=False)
+        assert cfg["overwrite_output_dir"] is False
+
+    def test_sft_config_save_only_model_false(self):
+        """SFT config should set save_only_model=False for checkpoint resume."""
+        gen = self._import_gen()
+        cfg = gen._sft_config("model/test", "ds", "tag", cpu_safe=False)
+        assert cfg["save_only_model"] is False
+
+    def test_dpo_config_overwrite_false(self):
+        """DPO config should set overwrite_output_dir=False for resume."""
+        gen = self._import_gen()
+        cfg = gen._dpo_config("model/test", "ds", "tag", cpu_safe=False)
+        assert cfg["overwrite_output_dir"] is False

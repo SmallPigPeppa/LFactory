@@ -578,7 +578,7 @@ examples:
     parser.add_argument("--synthetic-dpo-max", type=int, default=0,
                         help="Maximum synthetic DPO pairs (0 = unlimited).")
     parser.add_argument("--curriculum", action="store_true",
-                        help="Sort GOLD output by difficulty (easy → hard curriculum learning).")
+                        help="Sort GOLD output by difficulty (easy -> hard curriculum learning).")
     args = parser.parse_args()
 
     # Parse teacher weights
@@ -667,7 +667,7 @@ examples:
         gold_rows = _load_jsonl(gold_path)
         gold_rows = curriculum_sort(gold_rows)
         _save_jsonl(gold_rows, gold_path)
-        print(f"  Curriculum sort applied to {gold_count} GOLD samples (easy → hard).")  # xray: ignore[PY-004]
+        print(f"  Curriculum sort applied to {gold_count} GOLD samples (easy -> hard).")  # xray: ignore[PY-004]
 
     # Synthetic DPO generation from GOLD samples
     synth_count = 0
@@ -678,7 +678,7 @@ examples:
             synth_path = out_dir / "synthetic_dpo.jsonl"
             _save_jsonl(synth_pairs, synth_path)
             synth_count = len(synth_pairs)
-            print(f"  Generated {synth_count} synthetic DPO pairs → {synth_path}")  # xray: ignore[PY-004]
+            print(f"  Generated {synth_count} synthetic DPO pairs -> {synth_path}")  # xray: ignore[PY-004]
 
     # Save report with checksum for idempotent resume validation
     processed_total = gold_count + silver_count + drop_count

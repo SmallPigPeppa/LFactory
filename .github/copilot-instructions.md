@@ -178,15 +178,17 @@ Every stage is idempotent — re-run the same command after any crash:
 | Stage | Skip condition | Resume behaviour |
 |-------|---------------|-----------------|
 | Generation | `teacher_responses.jsonl` exists with expected row count | Per-teacher checkpoints auto-merged; missing prompts refilled |
-| Purification | `purified/purification_report.json` exists | Full skip |
+| Purification | `purified/purification_report.json` exists | Full skip; `--synthetic-dpo` generates cross-prompt DPO pairs |
 | Config gen | Both `*_sft.yaml` and `*_merge.yaml` exist | Full skip |
 | Dataset registration | Entry already in `dataset_info.json` | Idempotent write |
-| SFT training | `adapter_model.safetensors` present in output dir | Auto-resumes from highest `checkpoint-N` |
+| SFT training | Training complete (last step == total steps) | Auto-resumes from highest `checkpoint-N`; `overwrite_output_dir: false` |
 | DPO training | Same as SFT, or no `conflict_dpo.jsonl` samples | Skipped entirely when no DPO data |
 | Merge | `saves/<tag>/merged/config.json` exists | Full skip; auto-recovers adapter path from highest checkpoint |
 | Forge results | `saves/<tag>/forge_results.jsonl` exists | Full skip; synthesized from training artifacts in sequential mode |
-| Evaluation | `saves/<tag>/eval_scorecards.jsonl` exists | Full skip; two-pass: quick quiz → deep exam |
+| Evaluation | `saves/<tag>/eval_scorecards.jsonl` exists | Full skip; two-pass: quick quiz → deep exam; GGUF teacher eval via InProcessAdapter |
 | Dashboard | `saves/<tag>/graduation_report.json` exists | Exports markdown + HTML |
+| GGUF export | `saves/<tag>/gguf/slim_down_results.jsonl` exists | Full skip; exports Q4_K_M + speed bench |
+| Qualitative eval | `saves/<tag>/qualitative_eval.jsonl` exists | Full skip; generates sample responses from merged model |
 
 #### Student Forge Matrix (parallel multi-variant training)
 
