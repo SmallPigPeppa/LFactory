@@ -38,7 +38,7 @@ from pathlib import Path
 import yaml  # xray: ignore[SEC-015]
 
 
-def _sft_config(student: str, dataset_name: str, tag: str, cpu_safe: bool) -> dict:
+def _sft_config(student: str, dataset_name: str, tag: str, cpu_safe: bool, early_stopping_patience: int = 0) -> dict:
     cfg = {
         "model_name_or_path": student,
         "trust_remote_code": True,
@@ -70,10 +70,17 @@ def _sft_config(student: str, dataset_name: str, tag: str, cpu_safe: bool) -> di
         "bf16": not cpu_safe,
         "fp16": False,
     }
+    if early_stopping_patience > 0:
+        cfg["eval_strategy"] = "steps"
+        cfg["eval_steps"] = 50
+        cfg["load_best_model_at_end"] = True
+        cfg["metric_for_best_model"] = "eval_loss"
+        cfg["greater_is_better"] = False
+        cfg["early_stopping_patience"] = early_stopping_patience
     return cfg
 
 
-def _dpo_config(student: str, dataset_name: str, tag: str, cpu_safe: bool) -> dict:
+def _dpo_config(student: str, dataset_name: str, tag: str, cpu_safe: bool, early_stopping_patience: int = 0) -> dict:
     cfg = {
         "model_name_or_path": student,
         "adapter_name_or_path": f"saves/{tag}/lora/sft",
@@ -108,6 +115,13 @@ def _dpo_config(student: str, dataset_name: str, tag: str, cpu_safe: bool) -> di
         "bf16": not cpu_safe,
         "fp16": False,
     }
+    if early_stopping_patience > 0:
+        cfg["eval_strategy"] = "steps"
+        cfg["eval_steps"] = 50
+        cfg["load_best_model_at_end"] = True
+        cfg["metric_for_best_model"] = "eval_loss"
+        cfg["greater_is_better"] = False
+        cfg["early_stopping_patience"] = early_stopping_patience
     return cfg
 
 
@@ -191,6 +205,8 @@ examples:
     parser.add_argument("--specialists", nargs="*", help="Specialist model paths for DARE-TIES merge (optional).")
     parser.add_argument("--auto-register", action="store_true", help="Auto-register datasets in data/dataset_info.json.")
     parser.add_argument("--min-dpo-samples", type=int, default=20, help="Minimum DPO samples to include DPO training (default: 20).")
+    parser.add_argument("--early-stopping-patience", type=int, default=0,
+                        help="Early stopping patience (0 = disabled). Stops training when eval_loss doesn't improve.")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -219,11 +235,11 @@ examples:
 
     # Generate configs
     if has_sft:
-        sft_cfg = _sft_config(args.student, sft_name, args.tag, args.cpu_safe)
+        sft_cfg = _sft_config(args.student, sft_name, args.tag, args.cpu_safe, args.early_stopping_patience)
         _write_yaml(sft_cfg, out_dir / f"{args.tag}_sft.yaml", "Auto-generated SFT config")
 
     if has_dpo:
-        dpo_cfg = _dpo_config(args.student, dpo_name, args.tag, args.cpu_safe)
+        dpo_cfg = _dpo_config(args.student, dpo_name, args.tag, args.cpu_safe, args.early_stopping_patience)
         _write_yaml(dpo_cfg, out_dir / f"{args.tag}_dpo.yaml", "Auto-generated DPO config")
 
     if has_sft or has_dpo:

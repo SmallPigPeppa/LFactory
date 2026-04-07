@@ -154,6 +154,7 @@ concurrently, then splitting outputs into consensus (SFT) and conflict (DPO) dat
 | `scripts/loss_chart.py` | Loss comparison chart (text + SVG) with convergence prediction |
 | `scripts/pipeline_events.py` | Structured JSON event logger for pipeline stages |
 | `scripts/orchestrate_pipeline.py` | Cross-platform Python pipeline orchestrator (replaces PS1) |
+| `scripts/zenforge_cli.py` | Unified CLI entry point (`python scripts/zenforge_cli.py <command>`) |
 
 #### Generation architecture (v4 — SPSC Ring-Buffer FIFO)
 
@@ -256,6 +257,36 @@ Paths in `dataset_info.json` are **relative to `dataset_dir`** (default `"data"`
 strip the leading `data/` prefix. Use `_rel_to_data(path)` helper in `run_student_forge.py`
 to compute the correct relative path. Wrong: `"data/zena007/purified/x.jsonl"` →
 LlamaFactory joins `data/ + data/zena007/...` = double-path crash.
+
+#### Advanced purification features (`purify_teacher_outputs.py`)
+
+- **Embedding-based reasoning**: `--use-embeddings` uses all-MiniLM-L6-v2 for semantic
+  similarity (requires `sentence-transformers`). Falls back to SimHash when unavailable.
+- **Teacher weighting**: `--teacher-weights '{"qwen": 1.5, "llama": 1.0}'` — weighted
+  majority voting. Higher weight = more influence in consensus detection.
+- **Auto-tune thresholds**: `--auto-tune` sweeps answer/reason thresholds via grid search
+  to hit a target GOLD percentage (default 60%). Controlled by `--auto-tune-target`.
+- **Synthetic DPO**: `--synthetic-dpo` generates cross-prompt DPO pairs from GOLD samples
+  by pairing highest-confidence chosen with lowest-confidence rejected.
+- **Curriculum learning**: `--curriculum` sorts GOLD output by difficulty (easy → hard)
+  for progressive training.
+
+#### Early stopping (`gen_distill_configs.py`)
+
+`--early-stopping-patience N` (N > 0) adds `eval_strategy`, `eval_steps`, and
+`load_best_model_at_end` to SFT/DPO configs. Monitors `eval_loss` and stops when
+it doesn't improve for N eval rounds.
+
+#### Native GGUF export (`slim_down.py`)
+
+`--llama-cpp-path /path/to/llama.cpp` enables direct GGUF conversion via llama.cpp's
+`convert_hf_to_gguf.py` + `llama-quantize`. Falls back to LlamaFactory export CLI
+when not specified.
+
+#### CI/CD
+
+`.github/workflows/ci.yml` runs on push/PR: 59 tests (3 suites), ruff lint, and script
+smoke tests. No GPU required.
 
 ## Key Dependencies
 

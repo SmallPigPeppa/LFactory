@@ -61,11 +61,17 @@ def _run_single_trial(
     template: str,
     cpu_safe: bool,
     py: str,
+    eval_probes: str = "",
 ) -> float | None:
-    """Run a single SFT training variant and return final loss (or None on failure)."""
+    """Run a single SFT training variant and return objective metric.
+
+    If eval_probes is provided, returns validation loss (eval_loss) to avoid
+    overfitting. Otherwise falls back to final training loss.
+    """
     import subprocess
 
-    cfg = {
+    output_dir = f"saves/{tag}/bayesian/{trial_id}/lora/sft"
+    cfg: dict = {
         "model_name_or_path": model,
         "trust_remote_code": True,
         "stage": "sft",
@@ -80,7 +86,7 @@ def _run_single_trial(
         "max_samples": 10000,
         "preprocessing_num_workers": 1,
         "dataloader_num_workers": 0,
-        "output_dir": f"saves/{tag}/bayesian/{trial_id}/lora/sft",
+        "output_dir": output_dir,
         "logging_steps": 5,
         "save_steps": 500,
         "plot_loss": False,
@@ -97,6 +103,12 @@ def _run_single_trial(
         "fp16": False,
     }
 
+    # If eval probes provided, add eval config for validation loss
+    if eval_probes:
+        cfg["eval_dataset"] = eval_probes
+        cfg["eval_steps"] = 50
+        cfg["per_device_eval_batch_size"] = 1
+
     yaml_path = Path(f"saves/{tag}/bayesian/{trial_id}/config.yaml")
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
     with yaml_path.open("w", encoding="utf-8") as f:
@@ -111,12 +123,14 @@ def _run_single_trial(
     if proc.returncode != 0:
         return None
 
-    # Read final loss from trainer_log.jsonl
-    log_path = Path(cfg["output_dir"]) / "trainer_log.jsonl"
+    # Read final metric from trainer_log.jsonl
+    # Prefer eval_loss (validation) over loss (training) to avoid overfitting
+    log_path = Path(output_dir) / "trainer_log.jsonl"
     if not log_path.exists():
         return None
 
     last_loss = None
+    last_eval_loss = None
     for line in log_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
@@ -125,9 +139,13 @@ def _run_single_trial(
             entry = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             continue
+        if "eval_loss" in entry:
+            last_eval_loss = entry["eval_loss"]
         if "loss" in entry:
             last_loss = entry["loss"]
-    return last_loss
+
+    # Return eval_loss if available (better generalization signal), else training loss
+    return last_eval_loss if last_eval_loss is not None else last_loss
 
 
 def main() -> int:
@@ -156,6 +174,7 @@ examples:
     parser.add_argument("--epoch-min", type=int, default=1, help="Min epochs.")
     parser.add_argument("--epoch-max", type=int, default=5, help="Max epochs.")
     parser.add_argument("--timeout", type=int, default=0, help="Total search timeout in seconds (0=unlimited).")
+    parser.add_argument("--eval-probes", default="", help="Eval probes dataset name for validation loss (prevents overfitting).")
     args = parser.parse_args()
 
     matrix = yaml.safe_load(Path(args.base_matrix).read_text(encoding="utf-8"))
@@ -206,6 +225,7 @@ examples:
             template=template,
             cpu_safe=cpu_safe,
             py=args.py,
+            eval_probes=args.eval_probes,
         )
         elapsed = time.time() - t0
 

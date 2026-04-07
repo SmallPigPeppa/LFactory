@@ -118,7 +118,7 @@ def print_histogram(scored: list[dict], bins: int = 10) -> None:
         print("No data to histogram.")
         return
 
-    difficulties = [r["difficulty"] for r in scored]
+    difficulties = [r.get("difficulty", 0.5) for r in scored]
     bin_width = 1.0 / bins
     bin_counts = [0] * bins
 

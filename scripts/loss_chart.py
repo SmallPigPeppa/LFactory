@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from html import escape as _esc
 from pathlib import Path
 
 
@@ -89,11 +90,16 @@ def predict_convergence(
 ) -> dict:
     """Predict when training will converge based on recent loss trend.
 
-    Fits a simple exponential decay to the last `window` points and
-    extrapolates to the target loss (or to the asymptote if no target).
+    Fits an exponential decay L(t) = a*exp(-b*t) + c to the last `window`
+    points and extrapolates to the target loss (or to the asymptote c).
+
+    Falls back to linear fit if exponential fit fails (e.g., too few points
+    or non-monotonic data).
 
     Returns dict with prediction details.
     """
+    import math
+
     if len(entries) < 3:
         return {"converged": False, "reason": "too_few_points", "points": len(entries)}
 
@@ -101,48 +107,111 @@ def predict_convergence(
     losses = [e["loss"] for e in recent]
     steps = [e["step"] for e in recent]
 
-    # Calculate rate of improvement (negative = improving)
     if steps[-1] == steps[0]:
         return {"converged": True, "reason": "single_step"}
 
-    # Linear fit: loss = a * step + b
+    current_loss = losses[-1]
+    current_step = steps[-1]
+
+    # --- Attempt exponential decay fit: L(t) = asymptote + amplitude * exp(-rate * t) ---
+    # Use first/last/min to estimate parameters
+    asymptote_est = min(losses)  # floor estimate
+    amplitude_est = losses[0] - asymptote_est
+    exp_fit_ok = False
+    exp_rate = 0.0
+
+    if amplitude_est > 1e-6 and len(losses) >= 3:
+        # Estimate decay rate from log-space linear regression on (L - asymptote)
+        try:
+            log_residuals = []
+            log_steps = []
+            for s, l in zip(steps, losses):
+                residual = l - asymptote_est
+                if residual > 1e-8:
+                    log_residuals.append(math.log(residual))
+                    log_steps.append(s)
+
+            if len(log_steps) >= 2:
+                n = len(log_steps)
+                sx = sum(log_steps)
+                sy = sum(log_residuals)
+                sxy = sum(x * y for x, y in zip(log_steps, log_residuals))
+                sx2 = sum(x * x for x in log_steps)
+                denom = n * sx2 - sx * sx
+                if abs(denom) > 1e-12:
+                    exp_rate = -(n * sxy - sx * sy) / denom  # negative slope = positive rate
+                    exp_fit_ok = exp_rate > 0  # only valid if decaying
+        except (ValueError, OverflowError):
+            exp_fit_ok = False
+
+    result: dict = {
+        "current_loss": round(current_loss, 6),
+        "current_step": current_step,
+        "fit_type": "exponential" if exp_fit_ok else "linear",
+    }
+
+    if exp_fit_ok:
+        # Exponential model: loss approaching asymptote
+        result["asymptote"] = round(asymptote_est, 6)
+        result["decay_rate"] = round(exp_rate, 8)
+
+        gap = current_loss - asymptote_est
+        if gap < 0.001:
+            result["converged"] = True
+            result["reason"] = "near_asymptote"
+            result["final_loss"] = round(current_loss, 6)
+            return result
+
+        if target_loss is not None and target_loss > asymptote_est:
+            target_gap = target_loss - asymptote_est
+            if target_gap > 0 and gap > target_gap:
+                # steps_needed = ln(gap/target_gap) / rate
+                steps_needed = math.log(gap / target_gap) / exp_rate
+                result["target_loss"] = target_loss
+                result["estimated_steps_remaining"] = max(0, int(steps_needed))
+                result["converged"] = False
+                result["reason"] = "improving_exp"
+            else:
+                result["converged"] = True
+                result["reason"] = "target_reached"
+                result["final_loss"] = round(current_loss, 6)
+        else:
+            # Estimate steps to near-asymptote (gap < 0.001)
+            if gap > 0.001:
+                steps_to_floor = math.log(gap / 0.001) / exp_rate
+                result["estimated_steps_to_floor"] = max(0, int(steps_to_floor))
+            result["converged"] = False
+            result["reason"] = "improving_exp"
+        return result
+
+    # --- Fallback: linear fit ---
     n = len(steps)
     sum_x = sum(steps)
     sum_y = sum(losses)
     sum_xy = sum(x * y for x, y in zip(steps, losses))
     sum_x2 = sum(x * x for x in steps)
-
     denom = n * sum_x2 - sum_x * sum_x
+
     if abs(denom) < 1e-12:
-        return {"converged": True, "reason": "flat_loss", "final_loss": losses[-1]}
+        return {"converged": True, "reason": "flat_loss", "final_loss": round(losses[-1], 6)}
 
     slope = (n * sum_xy - sum_x * sum_y) / denom
     intercept = (sum_y - slope * sum_x) / n
 
-    current_loss = losses[-1]
-    current_step = steps[-1]
+    result["slope"] = round(slope, 8)
+    result["improvement_rate"] = round(-slope, 8)
 
-    result: dict = {
-        "current_loss": round(current_loss, 6),
-        "current_step": current_step,
-        "slope": round(slope, 8),
-        "improvement_rate": round(-slope, 8),
-    }
-
-    # Check if already converged (slope near zero)
     if abs(slope) < 1e-6:
         result["converged"] = True
         result["reason"] = "slope_near_zero"
         result["final_loss"] = round(current_loss, 6)
         return result
 
-    # If slope is positive, loss is increasing (diverging)
     if slope > 0:
         result["converged"] = False
         result["reason"] = "diverging"
         return result
 
-    # Predict steps to reach target
     if target_loss is not None and target_loss < current_loss:
         est_steps = (target_loss - intercept) / slope
         remaining = max(0, est_steps - current_step)
@@ -151,7 +220,6 @@ def predict_convergence(
         result["converged"] = False
         result["reason"] = "improving"
     else:
-        # Estimate convergence at asymptote (loss change < 0.001 per 100 steps)
         result["converged"] = False
         result["reason"] = "improving"
 
@@ -270,7 +338,7 @@ def build_html_chart(curves: dict[str, list[dict]]) -> str:
         lx = margin + idx * 120
         svg_lines.append(f'<rect x="{lx}" y="{legend_y - 8}" width="12" height="12" rx="2" fill="{color}"/>')
         svg_lines.append(
-            f'<text x="{lx + 16}" y="{legend_y + 2}" font-size="12" fill="#1d1d1f">{name}</text>'
+            f'<text x="{lx + 16}" y="{legend_y + 2}" font-size="12" fill="#1d1d1f">{_esc(name)}</text>'
         )
 
     svg_lines.append("</svg>")

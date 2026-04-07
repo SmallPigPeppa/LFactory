@@ -96,8 +96,12 @@ def check_manifest(path: Path, report: PreflightReport) -> list[dict]:
         return []
 
     if not isinstance(data, list):
-        report.error("Manifest must be a JSON array of teacher objects")
-        return []
+        # Support both list-of-teachers and dict-with-teachers-key formats
+        if isinstance(data, dict) and "teachers" in data and isinstance(data["teachers"], list):
+            data = data["teachers"]
+        else:
+            report.error("Manifest must be a JSON array of teacher objects (or dict with 'teachers' key)")
+            return []
 
     if len(data) == 0:
         report.error("Manifest is empty — no teachers defined")

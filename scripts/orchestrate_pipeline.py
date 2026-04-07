@@ -159,7 +159,9 @@ examples:
                 "--fifo-size", "0",
             ], dry_run=dry)
             if code != 0:
-                print("FATAL: Generation failed")  # xray: ignore[PY-004]
+                print("FATAL: Generation failed. Check teacher GGUF paths in")  # xray: ignore[PY-004]
+                print(f"  {manifest}")  # xray: ignore[PY-004]
+                print("  Tip: re-run with --skip-generate to bypass if data exists.")  # xray: ignore[PY-004]
                 return 1
             steps_run += 1
 
@@ -176,7 +178,9 @@ examples:
             "--resume",
         ], dry_run=dry)
         if code != 0:
-            print("FATAL: Purification failed")  # xray: ignore[PY-004]
+            print("FATAL: Purification failed. Check that the input file is valid JSONL:")  # xray: ignore[PY-004]
+            print(f"  {responses}")  # xray: ignore[PY-004]
+            print("  Tip: run validate_datasets.py --sft-data <file> for diagnostics.")  # xray: ignore[PY-004]
             return 1
         steps_run += 1
 
@@ -207,7 +211,9 @@ examples:
             cfg_cmd.append("--cpu-safe")
         code = _run_step("Generate training configs", cfg_cmd, dry_run=dry)
         if code != 0:
-            print("FATAL: Config generation failed")  # xray: ignore[PY-004]
+            print("FATAL: Config generation failed. Verify that purified data exists in:")  # xray: ignore[PY-004]
+            print(f"  {purified_dir}/")  # xray: ignore[PY-004]
+            print("  Tip: ensure consensus_sft.jsonl is present and non-empty.")  # xray: ignore[PY-004]
             return 1
         steps_run += 1
 
@@ -239,7 +245,10 @@ examples:
                     py, "-m", "llamafactory.cli", "train", sft_cfg,
                 ], dry_run=dry)
                 if code != 0:
-                    print("FATAL: SFT training failed")  # xray: ignore[PY-004]
+                    print(f"FATAL: SFT training failed. Check config: {sft_cfg}")  # xray: ignore[PY-004]
+                    print("  Common causes: OOM (reduce per_device_train_batch_size),")  # xray: ignore[PY-004]
+                    print("  missing model (check model_name_or_path), or dataset not registered.")  # xray: ignore[PY-004]
+                    print("  Tip: re-run — SFT auto-resumes from latest checkpoint.")  # xray: ignore[PY-004]
                     return 1
                 steps_run += 1
 

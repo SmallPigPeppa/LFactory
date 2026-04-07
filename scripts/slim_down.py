@@ -204,6 +204,87 @@ def _bench_gguf(gguf_path: str, probes: list[str], bench_count: int) -> dict:
         return {"tok_per_sec": None, "note": str(exc)}
 
 
+# ── Native llama.cpp GGUF export ─────────────────────────────────────────
+
+
+def _export_gguf_native(
+    quant: str,
+    model_path: str,
+    output_dir: Path,
+    llama_cpp_path: str,
+    ring: SPSCRingBuffer,
+    sem: threading.Semaphore,
+) -> None:
+    """Export HF model to GGUF via llama.cpp's convert + quantize tools."""
+    sem.acquire()
+    t0 = time.time()
+    result: dict = {
+        "quant": quant,
+        "ok": False,
+        "gguf_path": "",
+        "size_mb": 0.0,
+        "elapsed_sec": 0.0,
+        "error": None,
+        "backend": "llama.cpp",
+    }
+    try:
+        llama_dir = Path(llama_cpp_path)
+        convert_script = llama_dir / "convert_hf_to_gguf.py"
+        quantize_bin = llama_dir / "build" / "bin" / "llama-quantize"
+        if sys.platform == "win32":
+            quantize_bin = llama_dir / "build" / "bin" / "Release" / "llama-quantize.exe"
+            if not quantize_bin.exists():
+                quantize_bin = llama_dir / "build" / "bin" / "llama-quantize.exe"
+
+        if not convert_script.exists():
+            result["error"] = f"convert_hf_to_gguf.py not found at {convert_script}"
+            return
+        if not quantize_bin.exists():
+            result["error"] = f"llama-quantize not found at {quantize_bin}"
+            return
+
+        out_path = output_dir / quant
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        # Step 1: Convert HF → F16 GGUF
+        f16_gguf = out_path / "model-f16.gguf"
+        if not f16_gguf.exists():
+            proc = subprocess.run(
+                [sys.executable, str(convert_script), model_path, "--outfile", str(f16_gguf), "--outtype", "f16"],
+                capture_output=True, text=True, timeout=3600,
+            )
+            if proc.returncode != 0:
+                result["error"] = f"convert_hf_to_gguf failed: {proc.stderr[-500:]}"
+                return
+
+        # Step 2: Quantize F16 → target quant
+        quant_gguf = out_path / f"model-{quant}.gguf"
+        proc = subprocess.run(
+            [str(quantize_bin), str(f16_gguf), str(quant_gguf), quant],
+            capture_output=True, text=True, timeout=3600,
+        )
+        if proc.returncode != 0:
+            result["error"] = f"llama-quantize failed: {proc.stderr[-500:]}"
+            return
+
+        result["gguf_path"] = str(quant_gguf)
+        result["size_mb"] = round(quant_gguf.stat().st_size / (1024 * 1024), 1)
+        result["ok"] = True
+
+        # Clean up F16 intermediate (large)
+        if f16_gguf.exists() and quant_gguf.exists():
+            f16_gguf.unlink()
+
+    except subprocess.TimeoutExpired:
+        result["error"] = "llama.cpp export timed out (3600s)"
+    except Exception as exc:  # xray: ignore[QUAL-011]
+        result["error"] = str(exc)
+    finally:
+        result["elapsed_sec"] = round(time.time() - t0, 1)
+        ring.put(result)
+        sem.release()
+
+
 # ── Collector ────────────────────────────────────────────────────────────
 
 def _collect(buffers: dict[str, SPSCRingBuffer], total: int) -> list[dict]:
@@ -246,6 +327,8 @@ examples:
     parser.add_argument("--output-dir", help="Output directory for GGUF files.")
     parser.add_argument("--recommend-quant", action="store_true",
                         help="Analyze Pareto frontier of size vs speed and recommend optimal quant.")
+    parser.add_argument("--llama-cpp-path", type=str, default=None,
+                        help="Path to llama.cpp directory for native GGUF conversion (uses convert_hf_to_gguf.py + llama-quantize).")
     args = parser.parse_args()
 
     # Resolve model/adapter from champion.txt if using saves-tag
@@ -281,15 +364,53 @@ examples:
     buffers: dict[str, SPSCRingBuffer] = {}
     threads: list[threading.Thread] = []
 
+    use_native = bool(args.llama_cpp_path and Path(args.llama_cpp_path).is_dir())
+    if use_native:
+        print(f"Backend: llama.cpp ({args.llama_cpp_path})")  # xray: ignore[PY-004]
+    else:
+        print(f"Backend: LlamaFactory export CLI")  # xray: ignore[PY-004]
+
     for quant in args.quants:
         buf = SPSCRingBuffer(capacity=4)
         buffers[quant] = buf
-        th = threading.Thread(
-            target=_export_gguf,
-            args=(quant, model_path, adapter_path or "", out_dir, args.py, buf, sem),
-            daemon=True,
-            name=f"export-{quant}",
-        )
+        if use_native:
+            # Resolve merged model path for native export
+            merged = model_path
+            if adapter_path:
+                # Need to merge adapter first — use LlamaFactory merge then native quantize
+                merged_dir = out_dir / "merged_hf"
+                if not (merged_dir / "config.json").exists():
+                    print(f"  Merging adapter for llama.cpp export...")  # xray: ignore[PY-004]
+                    merge_yaml = out_dir / "merge_for_gguf.yaml"
+                    mc = {
+                        "model_name_or_path": model_path,
+                        "adapter_name_or_path": adapter_path,
+                        "template": "qwen",
+                        "export_dir": str(merged_dir),
+                        "export_size": 5,
+                        "export_device": "cpu",
+                        "export_legacy_format": False,
+                    }
+                    merge_yaml.write_text(
+                        "\n".join(f"{k}: {json.dumps(v)}" for k, v in mc.items()),
+                        encoding="utf-8",
+                    )
+                    subprocess.run(
+                        [args.py, "-m", "llamafactory.cli", "export", str(merge_yaml)],
+                        capture_output=True, text=True, timeout=1800,
+                    )
+                merged = str(merged_dir)
+            th = threading.Thread(
+                target=_export_gguf_native,
+                args=(quant, merged, out_dir, args.llama_cpp_path, buf, sem),
+                daemon=True, name=f"export-{quant}",
+            )
+        else:
+            th = threading.Thread(
+                target=_export_gguf,
+                args=(quant, model_path, adapter_path or "", out_dir, args.py, buf, sem),
+                daemon=True, name=f"export-{quant}",
+            )
         th.start()
         threads.append(th)
 

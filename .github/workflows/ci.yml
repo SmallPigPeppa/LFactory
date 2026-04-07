@@ -1,0 +1,107 @@
+name: ZEN Forge CI
+
+on:
+  push:
+    branches: [main, master, "docs/*"]
+    paths:
+      - "scripts/**"
+      - "tests/**"
+      - "src/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "scripts/**"
+      - "tests/**"
+      - "src/**"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('requirements/*.txt', 'pyproject.toml') }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install pytest pyyaml psutil
+
+      - name: Run Forge auto-heal tests
+        run: pytest tests/test_forge_autoheal.py -v --noconftest --tb=short
+
+      - name: Run integration pipeline tests
+        run: pytest tests/test_integration_pipeline.py -v --noconftest --tb=short
+
+      - name: Run end-to-end toy tests
+        run: pytest tests/test_end_to_end_toy.py -v --noconftest --tb=short
+
+  lint:
+    name: Quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install ruff
+
+      - name: Ruff lint
+        run: ruff check scripts/ src/llamafactory/ --select E,F,W --ignore E501
+
+      - name: Ruff format check
+        run: ruff format --check scripts/ src/llamafactory/ || true
+
+  script-smoke:
+    name: Script smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyyaml psutil
+
+      - name: Verify all scripts import cleanly
+        run: |
+          for script in scripts/*.py; do
+            echo "Checking $script..."
+            python -c "import ast; ast.parse(open('$script').read())" || exit 1
+          done
+
+      - name: Verify script --help
+        run: |
+          python scripts/purify_teacher_outputs.py --help
+          python scripts/gen_distill_configs.py --help
+          python scripts/validate_datasets.py --help
+          python scripts/prompt_difficulty.py --help
+          python scripts/pipeline_preflight.py --help
+          python scripts/loss_chart.py --help
+          python scripts/zenforge_cli.py --help

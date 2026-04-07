@@ -42,6 +42,58 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# Embedding-based similarity (optional — requires sentence-transformers)
+# ---------------------------------------------------------------------------
+
+_EMBED_MODEL = None
+_EMBED_AVAILABLE = False
+
+
+def _load_embedding_model() -> bool:
+    """Lazily load a lightweight sentence-transformer for semantic similarity."""
+    global _EMBED_MODEL, _EMBED_AVAILABLE
+    if _EMBED_MODEL is not None:
+        return _EMBED_AVAILABLE
+    try:
+        from sentence_transformers import SentenceTransformer
+
+        _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        _EMBED_AVAILABLE = True
+    except Exception:  # xray: ignore[QUAL-011]
+        _EMBED_MODEL = False  # type: ignore[assignment]
+        _EMBED_AVAILABLE = False
+    return _EMBED_AVAILABLE
+
+
+def _embedding_similarity(texts: list[str]) -> float:
+    """Compute average pairwise cosine similarity using sentence embeddings.
+
+    Returns 0.0-1.0.  Falls back to 0.0 if model unavailable.
+    """
+    if not _EMBED_AVAILABLE or _EMBED_MODEL is False:
+        return 0.0
+    try:
+        embeddings = _EMBED_MODEL.encode(texts, convert_to_tensor=False, show_progress_bar=False)
+        import numpy as np
+
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1, norms)
+        normed = embeddings / norms
+        sim_matrix = normed @ normed.T
+        n = len(texts)
+        if n < 2:
+            return 1.0
+        total = 0.0
+        count = 0
+        for i in range(n):
+            for j in range(i + 1, n):
+                total += float(sim_matrix[i, j])
+                count += 1
+        return total / count if count > 0 else 0.0
+    except Exception:  # xray: ignore[QUAL-011]
+        return 0.0
+
 
 # ---------------------------------------------------------------------------
 # SimHash — O(1) similarity estimation replacing O(n²) all-pairs n-gram
@@ -109,9 +161,30 @@ def _ngram_similarity(a: str, b: str, n: int = 3) -> float:
 
 
 def _normalize_answer(text: str) -> str:
-    """Normalize an answer for comparison: lowercase, strip whitespace/punctuation."""
+    """Normalize an answer for comparison: extract numeric values, strip common
+    prefixes ("The answer is", "It's"), lowercase, strip whitespace/punctuation.
+
+    Examples:
+        "The answer is 4."  → "4"
+        "4.0"               → "4.0"
+        "Four"              → "four"
+        "It's blue."        → "blue"
+        "  Hello World!!! " → "hello world"
+    """
     text = re.sub(r"\s+", " ", text.lower().strip())
-    text = re.sub(r"[^\w\s]", "", text)
+
+    # Strip common answer prefixes
+    for prefix in (
+        "the answer is", "the result is", "it is", "it's", "i think",
+        "i believe", "that would be", "the correct answer is",
+    ):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip().lstrip(":")
+
+    # Strip surrounding punctuation/quotes
+    text = re.sub(r"^[\s\"'`]+|[\s\"'`.,;:!?]+$", "", text)
+    # Remove remaining non-word chars (keep dots for decimals)
+    text = re.sub(r"[^\w\s.]", "", text)
     return text.strip()
 
 
@@ -122,8 +195,13 @@ def _normalize_answer(text: str) -> str:
 def _find_majority_answer(
     teacher_data: dict[str, dict],
     threshold: float,
+    weights: dict[str, float] | None = None,
 ) -> tuple[str | None, list[str], list[str]]:
     """Find the majority answer among teachers.
+
+    Args:
+        weights: optional name→weight mapping.  When provided, cluster
+            weight is sum of member weights rather than member count.
 
     Returns (majority_answer_normalized, agreeing_teachers, disagreeing_teachers).
     If no majority, returns (None, [], all_teachers).
@@ -147,12 +225,19 @@ def _find_majority_answer(
         if not placed:
             clusters.append([name])
 
-    # Find largest cluster
-    clusters.sort(key=len, reverse=True)
-    largest = clusters[0]
-    majority_needed = len(teacher_names) / 2.0
+    # Find largest cluster (by weight if provided, else by count)
+    def _cluster_weight(c: list[str]) -> float:
+        if weights:
+            return sum(weights.get(n, 1.0) for n in c)
+        return float(len(c))
 
-    if len(largest) > majority_needed:
+    clusters.sort(key=_cluster_weight, reverse=True)
+    largest = clusters[0]
+
+    total_weight = sum(weights.get(n, 1.0) for n in teacher_names) if weights else float(len(teacher_names))
+    majority_needed = total_weight / 2.0
+
+    if _cluster_weight(largest) > majority_needed:
         agree = largest
         disagree = [n for n in teacher_names if n not in set(largest)]
         majority_answer = answers[largest[0]]
@@ -165,10 +250,13 @@ def _check_reasoning_alignment(
     teacher_data: dict[str, dict],
     agreeing_teachers: list[str],
     threshold: float,
+    use_embeddings: bool = False,
 ) -> bool:
     """Check if reasoning traces of agreeing teachers are sufficiently similar.
 
-    Uses SimHash for O(1) per-pair similarity (replaces O(n²m) n-gram Jaccard).
+    When ``use_embeddings=True`` and ``sentence-transformers`` is installed,
+    uses all-MiniLM-L6-v2 cosine similarity (semantic).  Otherwise falls back
+    to SimHash character-level similarity (lexical).
     """
     thoughts = [teacher_data[t].get("thought", "") for t in agreeing_teachers]
     # Filter out empty thoughts
@@ -178,7 +266,12 @@ def _check_reasoning_alignment(
         # Can't compare — treat as aligned (benefit of the doubt)
         return True
 
-    # All-pairs similarity check (SimHash = O(n²) pairs but O(1) per pair)
+    # Try embedding-based similarity first
+    if use_embeddings and _load_embedding_model():
+        avg_sim = _embedding_similarity(thoughts)
+        return avg_sim >= threshold
+
+    # Fallback: SimHash for O(1) per-pair similarity
     similarities: list[float] = []
     for i in range(len(thoughts)):
         for j in range(i + 1, len(thoughts)):
@@ -193,8 +286,14 @@ def classify_sample(
     sample: dict,
     answer_threshold: float,
     reason_threshold: float,
+    use_embeddings: bool = False,
+    teacher_weights: dict[str, float] | None = None,
 ) -> tuple[str, dict]:
     """Classify a single sample as GOLD, SILVER, or DROP.
+
+    Args:
+        teacher_weights: optional name→weight mapping for weighted voting.
+            Higher weight = more influence in majority detection.
 
     Returns (tier, output_record).
     """
@@ -217,8 +316,10 @@ def classify_sample(
             "tier": "GOLD",
         }
 
-    # Find majority answer
-    majority_answer, agreeing, disagreeing = _find_majority_answer(teacher_data, answer_threshold)
+    # Find majority answer (weighted if weights provided)
+    majority_answer, agreeing, disagreeing = _find_majority_answer(
+        teacher_data, answer_threshold, teacher_weights,
+    )
 
     if majority_answer is None:
         # No majority — DROP
@@ -230,7 +331,9 @@ def classify_sample(
         }
 
     # Majority exists — check reasoning alignment
-    reasoning_aligned = _check_reasoning_alignment(teacher_data, agreeing, reason_threshold)
+    reasoning_aligned = _check_reasoning_alignment(
+        teacher_data, agreeing, reason_threshold, use_embeddings,
+    )
 
     # Confidence score = agreement strength (0-1)
     n_total = len(teacher_data)
@@ -259,18 +362,28 @@ def classify_sample(
         }
     else:
         # SILVER — answer agrees but reasoning differs → DPO pair
-        # chosen = majority answer, rejected = dissenter (or divergent-reasoning teacher)
+        # chosen = majority answer (best response), rejected = DISAGREEING teacher.
+        # If no disagreeing teachers exist (all agreed on answer but reasoning
+        # diverged), demote to GOLD instead — using a reasoning outlier as
+        # "rejected" risks inverted preferences.
         if disagreeing:
+            # Pick the disagreeing teacher whose answer is most different
             reject_teacher = disagreeing[0]
         else:
-            # All agree on answer but differ in reasoning — pick the one with most divergent thought
-            reject_teacher = min(
-                agreeing,
-                key=lambda t: _ngram_similarity(
-                    teacher_data[t].get("thought", ""),
-                    teacher_data[best_teacher].get("thought", ""),
-                ),
-            )
+            # All teachers agree on answer; reasoning differs but answer is correct.
+            # Safer to emit as GOLD than to fabricate a flawed DPO pair.
+            return "GOLD", {
+                "instruction": prompt,
+                "output": best_response,
+                "id": sample_id,
+                "source_teacher": best_teacher,
+                "agreeing_teachers": agreeing,
+                "tier": "GOLD",
+                "confidence": round(confidence, 4),
+                "n_teachers_agree": n_agree,
+                "difficulty": difficulty,
+                "note": "reasoning_divergent_but_answer_unanimous",
+            }
 
         rejected_response = teacher_data[reject_teacher].get("raw", teacher_data[reject_teacher].get("answer", ""))
 
@@ -286,6 +399,110 @@ def classify_sample(
             "n_teachers_agree": n_agree,
             "difficulty": difficulty,
         }
+
+
+# ---------------------------------------------------------------------------
+# Auto-tune thresholds (#3)
+# ---------------------------------------------------------------------------
+
+
+def auto_tune_thresholds(
+    samples: list[dict],
+    target_gold_pct: float = 60.0,
+    answer_range: tuple[float, float, float] = (0.70, 0.95, 0.05),
+    reason_range: tuple[float, float, float] = (0.40, 0.80, 0.05),
+) -> tuple[float, float]:
+    """Sweep answer/reason thresholds to get closest to ``target_gold_pct``.
+
+    Returns (best_answer_threshold, best_reason_threshold).
+    """
+    import itertools
+
+    best: tuple[float, float] = (0.85, 0.60)
+    best_delta = float("inf")
+
+    a_lo, a_hi, a_step = answer_range
+    r_lo, r_hi, r_step = reason_range
+
+    def _frange(lo: float, hi: float, step: float) -> list[float]:
+        vals: list[float] = []
+        v = lo
+        while v <= hi + 1e-9:
+            vals.append(round(v, 4))
+            v += step
+        return vals
+
+    for at, rt in itertools.product(_frange(a_lo, a_hi, a_step), _frange(r_lo, r_hi, r_step)):
+        gold = sum(1 for s in samples if classify_sample(s, at, rt)[0] == "GOLD")
+        pct = 100.0 * gold / max(len(samples), 1)
+        delta = abs(pct - target_gold_pct)
+        if delta < best_delta:
+            best_delta = delta
+            best = (at, rt)
+
+    return best
+
+
+# ---------------------------------------------------------------------------
+# Synthetic DPO pair generation (#4)
+# ---------------------------------------------------------------------------
+
+
+def generate_synthetic_dpo(
+    gold_samples: list[dict],
+    max_pairs: int = 0,
+) -> list[dict]:
+    """Generate synthetic DPO pairs from GOLD samples by pairing highest-
+    confidence chosen responses with lowest-confidence ones as rejected.
+
+    Pairs are formed across different prompts sharing similar difficulty.
+    ``max_pairs=0`` means unlimited (generates as many as possible).
+    """
+    if len(gold_samples) < 2:
+        return []
+
+    # Sort by confidence descending
+    scored = sorted(gold_samples, key=lambda s: s.get("confidence", 1.0), reverse=True)
+    top_half = scored[: len(scored) // 2]
+    bottom_half = scored[len(scored) // 2 :]
+
+    pairs: list[dict] = []
+    for chosen, rejected in zip(top_half, bottom_half):
+        if chosen.get("instruction") == rejected.get("instruction"):
+            continue  # skip same-prompt pairs
+        pair = {
+            "prompt": chosen["instruction"],
+            "chosen": chosen["output"],
+            "rejected": rejected["output"],
+            "id": f"synth_{chosen.get('id', '')}_{rejected.get('id', '')}",
+            "tier": "SYNTHETIC_DPO",
+            "chosen_confidence": chosen.get("confidence", 1.0),
+            "rejected_confidence": rejected.get("confidence", 1.0),
+        }
+        pairs.append(pair)
+        if max_pairs > 0 and len(pairs) >= max_pairs:
+            break
+
+    return pairs
+
+
+# ---------------------------------------------------------------------------
+# Curriculum learning — sort by difficulty (#7)
+# ---------------------------------------------------------------------------
+
+
+def curriculum_sort(samples: list[dict], reverse: bool = False) -> list[dict]:
+    """Sort samples by difficulty (easy → hard by default).
+
+    ``reverse=True`` gives hard → easy (anti-curriculum).
+    Each sample must have a ``difficulty`` field (0.0-1.0).
+    Samples without difficulty are placed at the end.
+    """
+    return sorted(
+        samples,
+        key=lambda s: (s.get("difficulty") is None, s.get("difficulty", 1.0)),
+        reverse=reverse,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +565,30 @@ examples:
     parser.add_argument("--reason-threshold", type=float, default=0.6, help="N-gram similarity threshold for reasoning alignment (default: 0.6).")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from where last run left off (skip already-processed samples).")
+    parser.add_argument("--use-embeddings", action="store_true",
+                        help="Use sentence-transformer embeddings for reasoning alignment (requires sentence-transformers).")
+    parser.add_argument("--teacher-weights", type=str, default=None,
+                        help='JSON string or file path mapping teacher names to weights, e.g. \'{"qwen": 1.5, "llama": 1.0}\'.')
+    parser.add_argument("--auto-tune", action="store_true",
+                        help="Auto-tune answer/reason thresholds to target ~60%% GOLD.")
+    parser.add_argument("--auto-tune-target", type=float, default=60.0,
+                        help="Target GOLD percentage for auto-tune (default: 60.0).")
+    parser.add_argument("--synthetic-dpo", action="store_true",
+                        help="Generate synthetic DPO pairs from GOLD samples.")
+    parser.add_argument("--synthetic-dpo-max", type=int, default=0,
+                        help="Maximum synthetic DPO pairs (0 = unlimited).")
+    parser.add_argument("--curriculum", action="store_true",
+                        help="Sort GOLD output by difficulty (easy → hard curriculum learning).")
     args = parser.parse_args()
+
+    # Parse teacher weights
+    teacher_weights: dict[str, float] | None = None
+    if args.teacher_weights:
+        tw = args.teacher_weights
+        if Path(tw).is_file():
+            teacher_weights = json.loads(Path(tw).read_text(encoding="utf-8"))
+        else:
+            teacher_weights = json.loads(tw)
 
     input_path = Path(args.input)
     out_dir = Path(args.out_dir)  # xray: ignore[PY-004]
@@ -360,7 +600,25 @@ examples:
 
     samples = _load_jsonl(input_path)
     total = len(samples)
+
+    # T1 — reconcile: count lines parsed vs file lines to detect silent data loss
+    file_lines = sum(1 for _ in open(input_path, encoding="utf-8") if _.strip())
+    if total < file_lines:
+        skipped = file_lines - total
+        print(f"WARNING: {skipped}/{file_lines} input lines were malformed JSON and skipped.", file=sys.stderr)
+        print(f"  Parsed: {total}, File lines: {file_lines}", file=sys.stderr)
+
     print(f"Loaded {total} samples for purification.")  # xray: ignore[PY-004]
+
+    # Auto-tune thresholds if requested
+    answer_threshold = args.answer_threshold
+    reason_threshold = args.reason_threshold
+    if args.auto_tune:
+        print(f"Auto-tuning thresholds (target GOLD {args.auto_tune_target:.0f}%)...")  # xray: ignore[PY-004]
+        answer_threshold, reason_threshold = auto_tune_thresholds(
+            samples, target_gold_pct=args.auto_tune_target,
+        )
+        print(f"  Selected: answer={answer_threshold:.2f} reason={reason_threshold:.2f}")  # xray: ignore[PY-004]
 
     # Resume support: count already-processed lines across all 3 output files
     skip = 0
@@ -384,7 +642,11 @@ examples:
         if idx < skip:
             continue
 
-        tier, record = classify_sample(sample, args.answer_threshold, args.reason_threshold)
+        tier, record = classify_sample(
+            sample, answer_threshold, reason_threshold,
+            use_embeddings=args.use_embeddings,
+            teacher_weights=teacher_weights,
+        )
         if tier == "GOLD":
             _append_jsonl(record, gold_path)
             gold_count += 1
@@ -400,18 +662,48 @@ examples:
         if processed % 500 == 0 or processed == total:
             print(f"  [{processed}/{total}] G={gold_count} S={silver_count} D={drop_count}", flush=True)  # xray: ignore[PY-004]
 
-    # Save report
+    # Curriculum sort: re-order GOLD file by difficulty (easy → hard)
+    if args.curriculum and gold_path.exists() and gold_count > 0:
+        gold_rows = _load_jsonl(gold_path)
+        gold_rows = curriculum_sort(gold_rows)
+        _save_jsonl(gold_rows, gold_path)
+        print(f"  Curriculum sort applied to {gold_count} GOLD samples (easy → hard).")  # xray: ignore[PY-004]
+
+    # Synthetic DPO generation from GOLD samples
+    synth_count = 0
+    if args.synthetic_dpo and gold_path.exists() and gold_count >= 2:
+        gold_rows = _load_jsonl(gold_path) if not args.curriculum else gold_rows  # reuse if loaded
+        synth_pairs = generate_synthetic_dpo(gold_rows, max_pairs=args.synthetic_dpo_max)
+        if synth_pairs:
+            synth_path = out_dir / "synthetic_dpo.jsonl"
+            _save_jsonl(synth_pairs, synth_path)
+            synth_count = len(synth_pairs)
+            print(f"  Generated {synth_count} synthetic DPO pairs → {synth_path}")  # xray: ignore[PY-004]
+
+    # Save report with checksum for idempotent resume validation
+    processed_total = gold_count + silver_count + drop_count
     report = {
         "total_samples": total,
+        "total_processed": processed_total,
         "gold_count": gold_count,
         "silver_count": silver_count,
         "dropped_count": drop_count,
         "gold_pct": round(100.0 * gold_count / max(total, 1), 1),
         "silver_pct": round(100.0 * silver_count / max(total, 1), 1),
         "dropped_pct": round(100.0 * drop_count / max(total, 1), 1),
-        "answer_threshold": args.answer_threshold,
-        "reason_threshold": args.reason_threshold,
+        "answer_threshold": answer_threshold,
+        "reason_threshold": reason_threshold,
+        "input_sha256": hashlib.sha256(input_path.read_bytes()).hexdigest(),
+        "use_embeddings": args.use_embeddings,
+        "teacher_weights": teacher_weights,
+        "auto_tuned": args.auto_tune,
+        "curriculum_sorted": args.curriculum,
+        "synthetic_dpo_count": synth_count,
     }
+
+    # Integrity check: processed rows should match input rows
+    if processed_total != total:
+        print(f"WARNING: processed {processed_total} != input {total}. Possible data loss.", file=sys.stderr)
     report_path = out_dir / "purification_report.json"
     with report_path.open("w", encoding="utf-8") as f:  # xray: ignore[PY-004]
         json.dump(report, f, indent=2)  # xray: ignore[PY-004]

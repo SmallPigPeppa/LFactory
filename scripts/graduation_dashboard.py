@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from html import escape as _esc
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +122,7 @@ def _build_html(report: dict[str, Any]) -> str:
     for s in students:
         for cat, info in s.get("retention_detail", {}).items():  # xray: ignore[QUAL-005]
             if not info.get("low_confidence") and info.get("value", 1.0) < ruin_threshold:
-                ruin_lines.append(f"<b>{s['variant_id']}</b> {cat} {info['value']:.0%}")
+                ruin_lines.append(f"<b>{_esc(s['variant_id'])}</b> {_esc(cat)} {info['value']:.0%}")
     if ruin_lines:
         html += f'<div class="alert alert-ruin">Ruin: {" &middot; ".join(ruin_lines)}</div>'
 
@@ -129,7 +130,7 @@ def _build_html(report: dict[str, Any]) -> str:
     emerge_lines: list[str] = []
     for s in students:
         for cat in s.get("emergent_categories", []):
-            emerge_lines.append(f"<b>{s['variant_id']}</b> {cat}")
+            emerge_lines.append(f"<b>{_esc(s['variant_id'])}</b> {_esc(cat)}")
     if emerge_lines:
         html += f'<div class="alert alert-emerge">Emergence: {" &middot; ".join(emerge_lines)}</div>'
 
@@ -146,7 +147,7 @@ def _build_html(report: dict[str, Any]) -> str:
     html += '<table class="grid"><thead><tr>'
     html += "<th>Variant</th>"
     for c in cats:
-        html += f"<th>{c}</th>"
+        html += f"<th>{_esc(c)}</th>"
     html += "<th>Overall</th><th></th></tr></thead><tbody>"
 
     # Pre-compute best value per category for delta indicators
@@ -168,7 +169,7 @@ def _build_html(report: dict[str, Any]) -> str:
         low_conf = set(s.get("low_confidence_categories", []))
         graduated = s.get("graduated", False)
 
-        html += f'<tr><td><b>{s["variant_id"]}</b></td>'
+        html += f'<tr><td><b>{_esc(s["variant_id"])}</b></td>'
         for c in cats:
             val = retention.get(c)
             if val is None:
@@ -214,9 +215,52 @@ def _build_html(report: dict[str, Any]) -> str:
     return html
 
 
-def build_dashboard(report: dict[str, Any]) -> gr.Blocks:
+def _load_loss_curves(saves_tag: str) -> str:
+    """Load trainer loss curves for all variants and render as HTML SVG chart."""
+    try:
+        from scripts.loss_chart import build_html_chart, _read_loss_curve
+    except ImportError:
+        try:
+            import importlib.util
+
+            spec = importlib.util.spec_from_file_location(
+                "loss_chart", Path(__file__).parent / "loss_chart.py",
+            )
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)  # type: ignore[union-attr]
+                build_html_chart = mod.build_html_chart
+                _read_loss_curve = mod._read_loss_curve
+            else:
+                return "<p>loss_chart.py not found.</p>"
+        except Exception:
+            return "<p>Could not import loss_chart module.</p>"
+
+    saves_dir = Path(f"saves/{saves_tag}")
+    curves: dict[str, list[dict]] = {}
+
+    # Scan for trainer_log.jsonl in variant subdirectories
+    for log_file in saves_dir.rglob("trainer_log.jsonl"):
+        variant = str(log_file.parent.relative_to(saves_dir)).replace("\\", "/")
+        entries = _read_loss_curve(log_file)
+        if entries:
+            curves[variant] = entries
+
+    if not curves:
+        return '<p style="color:#86868b;text-align:center">No training logs found.</p>'
+
+    return build_html_chart(curves)
+
+
+def build_dashboard(report: dict[str, Any], saves_tag: str = "") -> gr.Blocks:
     with gr.Blocks(title="Graduation", css=".gradio-container{max-width:800px!important}") as demo:
-        gr.HTML(_build_html(report))
+        with gr.Tab("Graduation"):
+            gr.HTML(_build_html(report))
+        with gr.Tab("Loss Curves"):
+            if saves_tag:
+                gr.HTML(_load_loss_curves(saves_tag))
+            else:
+                gr.HTML('<p style="color:#86868b;text-align:center">Provide --saves-tag to see loss curves.</p>')
         with gr.Accordion("Raw JSON", open=False):
             gr.JSON(report)
     return demo
@@ -319,8 +363,8 @@ def _build_live_html(results: list[dict]) -> str:
         is_champion = rank == 1 and r.get("ok")
         row_style = ' style="background:#f0fdf4"' if is_champion else ""
         rank_display = f"🏆 {rank}" if is_champion else str(rank)
-        html += f'<tr{row_style}><td>{rank_display}</td><td><b>{r.get("variant_id", "?")}</b></td>'
-        html += f'<td>{r.get("model", "?")}</td>'
+        html += f'<tr{row_style}><td>{rank_display}</td><td><b>{_esc(str(r.get("variant_id", "?")))}</b></td>'
+        html += f'<td>{_esc(str(r.get("model", "?")))}</td>'
         html += f'<td class="cell-val">{sft}</td>'
         html += f'<td class="cell-val">{dpo}</td>'
         html += f'<td>{elapsed}</td>'
@@ -415,7 +459,7 @@ examples:
         print(f"Markdown exported to {md_path}")  # xray: ignore[PY-004]
         return 0
 
-    demo = build_dashboard(report)
+    demo = build_dashboard(report, saves_tag=args.saves_tag or "")
     demo.launch(server_port=args.port, share=args.share)
     return 0
 
