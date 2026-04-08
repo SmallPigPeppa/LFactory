@@ -35,7 +35,7 @@ def configure_attn_implementation(config: "PretrainedConfig", model_args: "Model
     except ImportError:
           def is_flash_attn_3_available():
               return False
-              
+
     if getattr(config, "model_type", None) == "gpt_oss":
         from transformers.integrations.hub_kernels import load_and_register_kernel
 
@@ -61,6 +61,11 @@ def configure_attn_implementation(config: "PretrainedConfig", model_args: "Model
             logger.warning_rank0(
                 "Gemma-2 should use soft-capping attention, while the SDPA attention does not support it."
             )
+
+    if getattr(config, "model_type", None) in ["youtu", "youtu_vl"]:
+        if model_args.flash_attn in (AttentionFunction.AUTO, AttentionFunction.SDPA):
+            logger.warning_rank0("Youtu-VL does not support SDPA, forcing eager attention.")
+            model_args.flash_attn = AttentionFunction.DISABLED
 
     if model_args.flash_attn == AttentionFunction.AUTO:
         return
@@ -96,6 +101,13 @@ def configure_attn_implementation(config: "PretrainedConfig", model_args: "Model
     elif getattr(config, "model_type", None) == "kimi_vl":
         setattr(config.vision_config, "_attn_implementation", requested_attn_implementation)
         setattr(config.text_config, "_attn_implementation", requested_attn_implementation)
+    elif getattr(config, "model_type", None) == "youtu_vl":
+        setattr(config, "attn_implementation", requested_attn_implementation)
+        setattr(config, "_attn_implementation", requested_attn_implementation)
+        if hasattr(config, "vision_config"):
+            setattr(config.vision_config, "_attn_implementation", requested_attn_implementation)
+        if hasattr(config, "text_config"):
+            setattr(config.text_config, "_attn_implementation", requested_attn_implementation)
     else:
         setattr(config, "_attn_implementation", requested_attn_implementation)
 
