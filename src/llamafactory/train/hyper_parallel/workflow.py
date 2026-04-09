@@ -27,6 +27,7 @@ from ...model import load_model, load_tokenizer
 from ..callbacks import SaveProcessorCallback
 from ..sft.metric import ComputeAccuracy, ComputeSimilarity, eval_logit_processor
 from ..trainer_utils import asft_loss_func, create_modelcard_and_push, create_ref_model, dft_loss_func, eaft_loss_func
+from .trainer import HyperParallelTrainer
 
 
 if TYPE_CHECKING:
@@ -38,19 +39,16 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _get_hp_components():
-    r"""Load the shared HyperParallel trainer backend used by both PT and SFT."""
+def _get_hp_arguments():
+    r"""Load HyperParallelArguments from the HyperParallel package."""
     if not is_hyper_parallel_available():
         raise ImportError(
             "hyper_parallel is not installed. Please install it with `pip install hyper_parallel`."
         )
 
-    from hyper_parallel.integration.llamafactory import (  # pylint: disable=C0415
-        HyperParallelArguments,
-        HyperParallelTrainer,
-    )
+    from hyper_parallel.integration.llamafactory import HyperParallelArguments  # pylint: disable=C0415
 
-    return HyperParallelArguments, HyperParallelTrainer
+    return HyperParallelArguments
 
 
 def run_pt(
@@ -60,7 +58,7 @@ def run_pt(
     finetuning_args: "FinetuningArguments",
     callbacks: Optional[list["TrainerCallback"]] = None,
 ):
-    HyperParallelArguments, HyperParallelTrainer = _get_hp_components()
+    HyperParallelArguments = _get_hp_arguments()
 
     hp_args = HyperParallelArguments.from_finetuning_args(finetuning_args)
     # When HP activation optimization is enabled, skip LlamaFactory native gradient
@@ -145,7 +143,7 @@ def run_sft(
     generating_args: "GeneratingArguments",
     callbacks: Optional[list["TrainerCallback"]] = None,
 ):
-    HyperParallelArguments, HyperParallelTrainer = _get_hp_components()
+    HyperParallelArguments = _get_hp_arguments()
 
     hp_args = HyperParallelArguments.from_finetuning_args(finetuning_args)
     # When HP activation optimization is enabled, skip LlamaFactory native gradient
