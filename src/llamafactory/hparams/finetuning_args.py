@@ -180,9 +180,13 @@ class RLHFArguments:
         default=0.0,
         metadata={"help": "The Binary Classifier Optimization coefficient in DPO training."},
     )
-    pref_loss: Literal["sigmoid", "hinge", "ipo", "kto_pair", "orpo", "simpo"] = field(
+    pref_loss: Literal["sigmoid", "hinge", "ipo", "kto_pair", "orpo", "simpo", "list_dpo"] = field(
         default="sigmoid",
         metadata={"help": "The type of DPO loss to use."},
+    )
+    list_dpo_num_responses: int = field(
+        default=4,
+        metadata={"help": "The number of ranked responses for List DPO training (must be >= 2)."},
     )
     dpo_label_smoothing: float = field(
         default=0.0,
@@ -572,6 +576,9 @@ class FinetuningArguments(
         self.galore_target: list[str] = split_arg(self.galore_target)
         self.apollo_target: list[str] = split_arg(self.apollo_target)
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
+
+        if self.pref_loss == "list_dpo" and self.list_dpo_num_responses < 2:
+            raise ValueError("`list_dpo_num_responses` must be >= 2 for List DPO training.")
 
         assert self.finetuning_type in ["lora", "oft", "freeze", "full"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."

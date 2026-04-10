@@ -157,6 +157,58 @@ class CustomDPOTrainer(DPOTrainer):
         orpo_loss = sft_loss + self.beta * odds_ratio_loss
         return orpo_loss
 
+    def list_dpo_loss(
+        self,
+        policy_all_logps: "torch.Tensor",
+        reference_all_logps: Optional["torch.Tensor"],
+        num_responses: int,
+    ) -> tuple["torch.Tensor", "torch.Tensor"]:
+        r"""Compute List DPO loss over multiple ranked responses.
+
+        Extends standard pairwise DPO to listwise ranking.  For a list of responses
+        ranked as a1 > a2 > ... > aN, the loss is the sum of pairwise DPO losses
+        over all pairs (i, j) where i < j (i.e. response i is preferred over j).
+
+        Args:
+            policy_all_logps: Log-probs from policy model, shape ``(batch_size * N,)``.
+            reference_all_logps: Log-probs from reference model, shape ``(batch_size * N,)``
+                or ``None`` when no reference model is used.
+            num_responses: Number of ranked responses ``N``.
+
+        Returns:
+            A tuple of (losses, rewards) where losses has shape ``(batch_size,)``
+            and rewards has shape ``(batch_size * N,)``.
+        """
+        batch_size = policy_all_logps.size(0) // num_responses
+        # Reshape to (num_responses, batch_size)
+        policy_logps = policy_all_logps.view(num_responses, batch_size)
+        if reference_all_logps is not None:
+            ref_logps = reference_all_logps.view(num_responses, batch_size)
+            logratios = policy_logps - ref_logps  # (N, B)
+        else:
+            logratios = policy_logps  # (N, B)
+
+        # Compute rewards for metrics
+        rewards = (self.beta * logratios).detach()  # (N, B)
+
+        # Sum pairwise DPO losses: for all pairs (i, j) with i < j
+        total_loss = torch.zeros(batch_size, device=policy_all_logps.device, dtype=policy_all_logps.dtype)
+        num_pairs = 0
+        for i in range(num_responses):
+            for j in range(i + 1, num_responses):
+                # response i is preferred over response j
+                logits_diff = self.beta * (logratios[i] - logratios[j])
+                total_loss += -F.logsigmoid(logits_diff)
+                num_pairs += 1
+
+        # Average over the number of pairs
+        if num_pairs > 0:
+            total_loss = total_loss / num_pairs
+
+        # Flatten rewards back to (batch_size * N,)
+        rewards = rewards.t().reshape(-1)
+        return total_loss, rewards
+
     def simpo_loss(self, chosen_logps: "torch.Tensor", rejected_logps: "torch.Tensor") -> "torch.Tensor":
         r"""Compute SimPO loss for batched log probabilities of the policy model."""
         pi_logratios = chosen_logps - rejected_logps
@@ -227,10 +279,32 @@ class CustomDPOTrainer(DPOTrainer):
             batch = nested_detach(batch, clone=True)  # avoid error
 
         labels = batch.pop("labels")  # dpo do not need compute loss in forward
+        list_num_responses = batch.pop("list_num_responses", None)
         all_logits: torch.Tensor = model(**batch, return_dict=True, use_cache=False).logits.to(torch.float32)
         all_logps, valid_length = get_batch_logps(
             logits=all_logits, labels=labels, ld_alpha=(self.ld_alpha if not is_ref_model else None)
         )
+
+        # Handle List DPO: N responses per prompt
+        if self.loss_type == "list_dpo":
+            num_responses = list_num_responses.item() if list_num_responses is not None else self.finetuning_args.list_dpo_num_responses
+            batch_size = all_logps.size(0) // num_responses
+            # For list DPO, the best response (rank 0) is the "chosen" for SFT loss
+            chosen_logps = all_logps[:batch_size]
+            chosen_logits = all_logits[:batch_size]
+            chosen_length = valid_length[:batch_size]
+            chosen_logps_avg = chosen_logps / chosen_length
+            return {
+                "all_logps": all_logps,
+                "all_logits": all_logits,
+                "chosen_logps": chosen_logps,
+                "rejected_logps": all_logps[batch_size : 2 * batch_size],  # second-best for metrics
+                "chosen_logits": chosen_logits,
+                "rejected_logits": all_logits[batch_size : 2 * batch_size],
+                "chosen_logps_avg": chosen_logps_avg,
+                "list_num_responses": num_responses,
+            }
+
         if self.loss_type in ["ipo", "orpo", "simpo"]:
             all_logps = all_logps / valid_length
 
@@ -268,6 +342,8 @@ class CustomDPOTrainer(DPOTrainer):
 
         with torch.no_grad(), ref_context:
             ref_output = self.concatenated_forward(ref_model, batch, is_ref_model=True)
+            if self.loss_type == "list_dpo":
+                return ref_output.get("all_logps"), None
             reference_chosen_logps = ref_output["chosen_logps"]
             reference_rejected_logps = ref_output["rejected_logps"]
 
@@ -284,6 +360,11 @@ class CustomDPOTrainer(DPOTrainer):
         metrics = {}
 
         model_output = self.concatenated_forward(model, batch)
+
+        # Handle List DPO separately
+        if self.loss_type == "list_dpo":
+            return self._get_list_dpo_loss_metrics(model, batch, model_output, train_eval, metrics)
+
         policy_chosen_logps = model_output["chosen_logps"]
         policy_rejected_logps = model_output["rejected_logps"]
         policy_chosen_logits = model_output["chosen_logits"]
@@ -313,6 +394,48 @@ class CustomDPOTrainer(DPOTrainer):
         if self.loss_type == "orpo":
             metrics[f"{prefix}sft_loss"] = sft_loss.mean().item()
             metrics[f"{prefix}odds_ratio_loss"] = ((losses - sft_loss) / self.beta).mean().item()
+
+        return losses.mean(), metrics
+
+    def _get_list_dpo_loss_metrics(
+        self,
+        model: "PreTrainedModel",
+        batch: dict[str, "torch.Tensor"],
+        model_output: dict[str, "torch.Tensor"],
+        train_eval: Literal["train", "eval"],
+        metrics: dict[str, "torch.Tensor"],
+    ) -> tuple["torch.Tensor", dict[str, "torch.Tensor"]]:
+        r"""Compute List DPO loss and metrics."""
+        policy_all_logps = model_output["all_logps"]
+        num_responses = model_output["list_num_responses"]
+        policy_chosen_logps_avg = model_output["chosen_logps_avg"]
+
+        # Get reference log probs
+        reference_all_logps, _ = self.compute_reference_log_probs(model, batch)
+
+        losses, rewards = self.list_dpo_loss(policy_all_logps, reference_all_logps, num_responses)
+
+        # SFT loss on the best response
+        sft_loss = -policy_chosen_logps_avg
+        if self.ftx_gamma > 1e-6:
+            losses += self.ftx_gamma * sft_loss
+
+        # Compute metrics using the best (rank 0) and worst (rank N-1) responses
+        batch_size = policy_all_logps.size(0) // num_responses
+        rewards_by_rank = rewards.view(batch_size, num_responses)
+        chosen_rewards = rewards_by_rank[:, 0]
+        rejected_rewards = rewards_by_rank[:, -1]
+
+        prefix = "eval_" if train_eval == "eval" else ""
+        metrics[f"{prefix}rewards/chosen"] = chosen_rewards.mean().item()
+        metrics[f"{prefix}rewards/rejected"] = rejected_rewards.mean().item()
+        metrics[f"{prefix}rewards/accuracies"] = (chosen_rewards > rejected_rewards).float().mean().item()
+        metrics[f"{prefix}rewards/margins"] = (chosen_rewards - rejected_rewards).mean().item()
+        metrics[f"{prefix}logps/chosen"] = model_output["chosen_logps"].mean().item()
+        metrics[f"{prefix}logps/rejected"] = model_output["rejected_logps"].mean().item()
+        metrics[f"{prefix}logits/chosen"] = model_output["chosen_logits"].mean().item()
+        metrics[f"{prefix}logits/rejected"] = model_output["rejected_logits"].mean().item()
+        metrics[f"{prefix}list_dpo/num_responses"] = float(num_responses)
 
         return losses.mean(), metrics
 
