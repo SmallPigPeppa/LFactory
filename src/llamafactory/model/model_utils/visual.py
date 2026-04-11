@@ -49,21 +49,15 @@ class CompositeModel:
         mm_projectors: list[torch.nn.Module] = []
         for projector_key in self.projector_keys:
             mm_projector = module
-            missing_key = False
             for key in projector_key.split("."):
-                if not hasattr(mm_projector, key):
-                    missing_key = True
+                mm_projector = getattr(mm_projector, key, None)
+                if mm_projector is None:
                     logger.warning_rank0(
-                        f"Skip missing multimodal projector `{projector_key}` for model type `{self.model_type}`."
+                        f"Skip missing multimodal projector {projector_key} for model type {self.model_type}."
                     )
                     break
-
-                mm_projector = getattr(mm_projector, key)
-
-            if missing_key:
-                continue
-
-            mm_projectors.append(mm_projector)
+            else:
+                mm_projectors.append(mm_projector)
 
         return mm_projectors
 
