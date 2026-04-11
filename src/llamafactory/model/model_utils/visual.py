@@ -49,8 +49,19 @@ class CompositeModel:
         mm_projectors: list[torch.nn.Module] = []
         for projector_key in self.projector_keys:
             mm_projector = module
+            missing_key = False
             for key in projector_key.split("."):
+                if not hasattr(mm_projector, key):
+                    missing_key = True
+                    logger.warning_rank0(
+                        f"Skip missing multimodal projector `{projector_key}` for model type `{self.model_type}`."
+                    )
+                    break
+
                 mm_projector = getattr(mm_projector, key)
+
+            if missing_key:
+                continue
 
             mm_projectors.append(mm_projector)
 
@@ -144,6 +155,12 @@ def autocast_projector_dtype(model: "PreTrainedModel", model_args: "ModelArgumen
         if model_type in COMPOSITE_MODELS:
             mm_projectors = COMPOSITE_MODELS[model_type].get_projectors(model)
         else:
+            return
+
+        if not mm_projectors:
+            logger.warning_rank0(
+                f"No multimodal projector found for model type `{model_type}`, skip projector dtype autocast."
+            )
             return
 
         logger.info_rank0(
