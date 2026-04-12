@@ -97,13 +97,22 @@ class DistributedStrategy:
 
     @property
     def data_mesh_shape(self) -> tuple[int, int]:
-        """Data parallel mesh shape."""
-        return (self.dp_size, self.cp_size)
+        """Data parallel mesh shape.
+
+        Note: The order is (cp_size, dp_size) because FSDP2's 2D mesh behavior is:
+        - dim 0: replicate
+        - dim 1: shard
+
+        So for DP+CP parallelism, we want:
+        - CP on dim 0 (replicate across CP)
+        - DP on dim 1 (shard across DP)
+        """
+        return (self.cp_size, self.dp_size)
 
     @property
     def data_mesh_dim_names(self) -> tuple[str, str]:
         """Data parallel mesh dimension names."""
-        return (Dim.DP.value, Dim.CP.value)
+        return (Dim.CP.value, Dim.DP.value)
 
 
 class DistributedInterface:
