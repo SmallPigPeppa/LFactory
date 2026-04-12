@@ -545,6 +545,42 @@ class PairwiseDataCollatorWithPadding(MultiModalDataCollatorForSeq2Seq):
 
 
 @dataclass
+class ListwiseDataCollatorWithPadding(MultiModalDataCollatorForSeq2Seq):
+    r"""Data collator for listwise ranking data (List DPO).
+
+    Each feature contains ``list_input_ids``, ``list_attention_mask``, ``list_labels``
+    with *N* ranked responses per prompt.  The collator flattens them into a single
+    batch of size ``batch_size * N`` so that the trainer can compute log-probs for
+    every response in one forward pass.
+    """
+
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, "torch.Tensor"]:
+        r"""Pad batched data to the longest sequence in the batch.
+
+        We generate batch_size * N examples where responses are ordered by rank
+        (all rank-0 first, then all rank-1, etc.).
+        """
+        # Determine the number of responses (should be uniform within a batch)
+        num_responses = features[0]["list_num_responses"]
+        concatenated_features = []
+        for rank_idx in range(num_responses):
+            for feature in features:
+                target_feature = {
+                    "input_ids": feature["list_input_ids"][rank_idx],
+                    "attention_mask": feature["list_attention_mask"][rank_idx],
+                    "labels": feature["list_labels"][rank_idx],
+                    "images": feature["images"],
+                    "videos": feature["videos"],
+                    "audios": feature["audios"],
+                }
+                concatenated_features.append(target_feature)
+
+        batch = super().__call__(concatenated_features)
+        batch["list_num_responses"] = torch.tensor(num_responses, dtype=torch.long)
+        return batch
+
+
+@dataclass
 class KTODataCollatorWithPadding(MultiModalDataCollatorForSeq2Seq):
     r"""Data collator for KTO data."""
 

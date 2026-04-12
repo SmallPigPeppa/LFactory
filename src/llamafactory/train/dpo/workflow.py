@@ -17,7 +17,7 @@
 
 from typing import TYPE_CHECKING, Optional
 
-from ...data import PairwiseDataCollatorWithPadding, get_dataset, get_template_and_fix_tokenizer
+from ...data import ListwiseDataCollatorWithPadding, PairwiseDataCollatorWithPadding, get_dataset, get_template_and_fix_tokenizer
 from ...extras.constants import IGNORE_INDEX
 from ...extras.misc import calculate_tps
 from ...extras.ploting import plot_loss
@@ -42,10 +42,12 @@ def run_dpo(
     tokenizer_module = load_tokenizer(model_args)
     tokenizer = tokenizer_module["tokenizer"]
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
-    dataset_module = get_dataset(template, model_args, data_args, training_args, stage="rm", **tokenizer_module)
+    data_stage = "list_rm" if finetuning_args.pref_loss == "list_dpo" else "rm"
+    dataset_module = get_dataset(template, model_args, data_args, training_args, stage=data_stage, **tokenizer_module)
     model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
 
-    data_collator = PairwiseDataCollatorWithPadding(
+    collator_cls = ListwiseDataCollatorWithPadding if finetuning_args.pref_loss == "list_dpo" else PairwiseDataCollatorWithPadding
+    data_collator = collator_cls(
         template=template,
         model=model,
         pad_to_multiple_of=8,
@@ -88,7 +90,7 @@ def run_dpo(
     if training_args.do_train:
         train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
         trainer.save_model()
-        if finetuning_args.include_effective_tokens_per_second:
+        if finetuning_args.include_effective_tokens_per_second and finetuning_args.pref_loss != "list_dpo":
             train_result.metrics["effective_tokens_per_sec"] = calculate_tps(
                 dataset_module["train_dataset"], train_result.metrics, stage="rm"
             )

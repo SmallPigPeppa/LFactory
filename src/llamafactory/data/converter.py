@@ -107,6 +107,15 @@ class AlpacaDatasetConverter(DatasetConverter):
                 response = [{"role": Role.ASSISTANT.value, "content": ""}] + response
         elif (
             self.dataset_attr.ranking
+            and self.dataset_attr.responses
+            and isinstance(example.get(self.dataset_attr.responses), list)
+        ):  # listwise ranking example (List DPO)
+            response = [
+                {"role": Role.ASSISTANT.value, "content": resp}
+                for resp in example[self.dataset_attr.responses]
+            ]
+        elif (
+            self.dataset_attr.ranking
             and isinstance(example[self.dataset_attr.chosen], str)
             and isinstance(example[self.dataset_attr.rejected], str)
         ):  # pairwise example
