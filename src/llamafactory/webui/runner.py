@@ -129,13 +129,18 @@ class Runner:
         torch_gc()
 
     def _read_stderr(self) -> str:
-        r"""Read the stderr content from the temporary file."""
+        r"""Read the stderr content from the temporary file.
+
+        Only reads the last 64KB to prevent memory exhaustion from verbose subprocess output.
+        """
         if self._stderr_file is None:
             return ""
 
         try:
             self._stderr_file.flush()
-            self._stderr_file.seek(0)
+            self._stderr_file.seek(0, os.SEEK_END)
+            size = self._stderr_file.tell()
+            self._stderr_file.seek(max(0, size - 65536))
             return self._stderr_file.read()
         except Exception:
             return ""

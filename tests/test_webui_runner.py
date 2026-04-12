@@ -187,11 +187,41 @@ class TestStderrFileLifecycle:
                     stderr_file.write(msg)
                 stderr_file.flush()
 
-                # Read back like Runner._read_stderr does
-                stderr_file.seek(0)
+                # Read back like Runner._read_stderr does (last 64KB)
+                stderr_file.seek(0, os.SEEK_END)
+                size = stderr_file.tell()
+                stderr_file.seek(max(0, size - 65536))
                 content = stderr_file.read()
                 for msg in error_messages:
                     assert msg in content
+            finally:
+                os.unlink(stderr_path)
+
+    def test_read_stderr_large_file_truncated(self):
+        """Verify that only the last 64KB is read from a large stderr file."""
+        with tempfile.NamedTemporaryFile(
+            mode="w+", prefix="llamafactory_stderr_", suffix=".log", delete=False
+        ) as stderr_file:
+            stderr_path = stderr_file.name
+            try:
+                # Write more than 64KB of early content
+                early_marker = "EARLY_CONTENT_MARKER\n"
+                stderr_file.write(early_marker * 5000)  # ~105KB of early content
+                # Write a late marker that should be within the last 64KB
+                late_marker = "LATE_ERROR: final crash info\n"
+                stderr_file.write(late_marker)
+                stderr_file.flush()
+
+                # Read back like Runner._read_stderr does (last 64KB)
+                stderr_file.seek(0, os.SEEK_END)
+                size = stderr_file.tell()
+                stderr_file.seek(max(0, size - 65536))
+                content = stderr_file.read()
+
+                assert late_marker in content
+                assert len(content) <= 65536
+                # Early content at the very beginning should be truncated
+                assert content.count("EARLY_CONTENT_MARKER") < 5000
             finally:
                 os.unlink(stderr_path)
 
