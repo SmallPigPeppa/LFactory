@@ -37,6 +37,7 @@ from ..accelerator.helper import DeviceType
 from ..accelerator.interface import DistributedInterface
 from ..config.model_args import ModelArguments, ModelClass
 from ..utils import logging
+from ..utils.deepspeed_utils import setup_deepspeed_zero3_model_loading, teardown_deepspeed_zero3_model_loading
 from ..utils.types import HFConfig, HFModel, Processor
 from .utils.rendering import Renderer
 
@@ -52,7 +53,11 @@ class ModelEngine:
         is_train: Whether to train the model.
     """
 
-    def __init__(self, model_args: ModelArguments, is_train: bool = False) -> None:
+    def __init__(
+        self,
+        model_args: ModelArguments,
+        is_train: bool = False,
+    ) -> None:
         self.args = model_args
         """Model arguments."""
         self.is_train = is_train
@@ -63,8 +68,18 @@ class ModelEngine:
         """Renderer."""
         self.model_config = self._init_model_config()
         """Model configuration."""
-        self.model = self._init_model()
-        """HF model."""
+        self._dist_config = DistributedInterface().dist_config
+        self._deepspeed_zero3_plugin = None
+        self._deepspeed_zero3_enabled = False
+        try:
+            self._deepspeed_zero3_plugin = setup_deepspeed_zero3_model_loading(self.is_train, self._dist_config)
+            self._deepspeed_zero3_enabled = self._deepspeed_zero3_plugin is not None
+            self.model = self._init_model()
+            """HF model."""
+        finally:
+            teardown_deepspeed_zero3_model_loading(self._deepspeed_zero3_plugin)
+            self._deepspeed_zero3_plugin = None
+            self._deepspeed_zero3_enabled = False
 
     def _init_processor(self) -> Processor:
         """Init processor.
@@ -97,7 +112,7 @@ class ModelEngine:
         else:
             init_device = DistributedInterface().current_device
 
-        init_kwargs = {"device_map": init_device}
+        init_kwargs = {} if self._deepspeed_zero3_enabled else {"device_map": init_device}
 
         if self.args.quant_config is not None:
             from ..plugins.model_plugins.quantization import QuantizationPlugin

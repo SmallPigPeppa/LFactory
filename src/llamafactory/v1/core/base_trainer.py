@@ -158,6 +158,7 @@ class BaseTrainer:
             self.model = DistributedPlugin(self.args.dist_config.name)(
                 self.model,
                 self.args.dist_config,
+                bf16=self.args.bf16,
             )
 
     def _init_optimizer(self) -> None:
