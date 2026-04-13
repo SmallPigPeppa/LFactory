@@ -78,9 +78,7 @@ def _training_function(config: dict[str, Any]) -> None:
 
     if finetuning_args.stage == "sft" and finetuning_args.use_hyper_parallel:
         if not is_hyper_parallel_available():
-            raise ImportError(
-                "hyper_parallel is not installed. Please install it with `pip install hyper_parallel`."
-            )
+            raise ImportError("hyper_parallel is not installed. Please install it with `pip install hyper_parallel`.")
         from .hyper_parallel import run_sft as run_sft_hp
 
         run_sft_hp(model_args, data_args, training_args, finetuning_args, generating_args, callbacks)
@@ -293,12 +291,12 @@ def _ray_training_function(ray_args: "RayArguments", config: dict[str, Any]) -> 
             raise ValueError(f"The `master_addr` ({master_addr}) is not in Ray cluster or not alive ")
 
     # create placementgroup for resource management
-    pg, bundle = get_placement_group(total_devices)
+    pg, bundle = get_placement_group(num_workers)
     ray.get(pg.ready())
     logger.info(f"Create placement group with {num_workers} bundles: {bundle}")
 
     # get sorted_bundle_indices
-    sorted_bundle_indices = sort_placement_group_by_node_ip(pg, master_addr)
+    sorted_bundle_indices, master_addr = sort_placement_group_by_node_ip(pg, master_addr)
 
     # get master port
     if master_port is None:
