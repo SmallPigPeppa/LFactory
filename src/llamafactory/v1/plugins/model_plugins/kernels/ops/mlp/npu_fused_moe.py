@@ -282,17 +282,62 @@ class Qwen3NpuMoeFused:
         return next_states, router_logits
 
 
-# moe patch config mapping
-kernel_moe_mapping = {
-    "Qwen3VLMoeForConditionalGeneration": {
-        "Qwen3VLMoeTextExperts": NpuMoeFused.npu_moe_experts_forward,
-        "Qwen3VLMoeTextSparseMoeBlock": NpuMoeFused.npu_moe_sparse_block_forward,
-    }
-}
+class NpuMoeFusedV5:
+    """Container for NPU fused MoE forward functions adapted for transformers >= 5.0.0.
 
-if not is_transformers_version_greater_than("5.0.0"):
-    kernel_moe_mapping["Qwen3MoeForCausalLM"] = {
-        "Qwen3MoeSparseMoeBlock": Qwen3NpuMoeFused.qwen3moe_sparse_moe_block_forward
+    In transformers 5.x, the Qwen3VLMoe model was refactored:
+    - ``Qwen3VLMoeTextExperts`` uses ``self.hidden_dim`` instead of ``self.hidden_size``.
+    - ``Qwen3VLMoeTextSparseMoeBlock`` no longer holds ``hidden_size``, ``top_k``,
+      or ``num_experts`` attributes. These are now on the ``Qwen3VLMoeTextTopKRouter``.
+    - ``self.gate`` changed from ``nn.Linear`` to ``Qwen3VLMoeTextTopKRouter``,
+      which returns a 3-tuple ``(router_logits, router_scores, router_indices)``
+      and internally performs softmax, top-k selection, and normalization.
+    """
+
+    @staticmethod
+    def npu_moe_experts_forward(
+        self, hidden_states: torch.Tensor, routing_weights: torch.Tensor, router_indices: torch.Tensor
+    ) -> torch.Tensor:
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        permuted_hidden_states, row_ids_map = torch_npu.npu_moe_token_permute(
+            hidden_states, router_indices.to(torch.int32)
+        )
+        tokens_per_expert = torch.histc(router_indices, bins=self.num_experts, min=0, max=self.num_experts)
+        gate_up_w = self.gate_up_proj.transpose(1, 2).contiguous()
+        down_w = self.down_proj.transpose(1, 2).contiguous()
+        intermediate_hidden_states = GmmFunction.apply(permuted_hidden_states, gate_up_w, tokens_per_expert)
+        intermediate_activations = torch_npu.npu_swiglu(intermediate_hidden_states, dim=-1)
+        output = GmmFunction.apply(intermediate_activations, down_w, tokens_per_expert)
+        next_states = torch_npu.npu_moe_token_unpermute(output, row_ids_map, probs=routing_weights)
+        return next_states
+
+    @staticmethod
+    def npu_moe_sparse_block_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, sequence_length, hidden_dim = hidden_states.shape
+        hidden_states_reshaped = hidden_states.view(-1, hidden_dim)
+        _, routing_weights, selected_experts = self.gate(hidden_states_reshaped)
+        routing_weights = routing_weights.to(hidden_states.dtype)
+        routed_out = self.experts(hidden_states_reshaped, routing_weights, selected_experts)
+        return routed_out.reshape(batch_size, sequence_length, hidden_dim)
+
+
+# moe patch config mapping
+if is_transformers_version_greater_than("5.0.0"):
+    kernel_moe_mapping = {
+        "Qwen3VLMoeForConditionalGeneration": {
+            "Qwen3VLMoeTextExperts": NpuMoeFusedV5.npu_moe_experts_forward,
+            "Qwen3VLMoeTextSparseMoeBlock": NpuMoeFusedV5.npu_moe_sparse_block_forward,
+        }
+    }
+else:
+    kernel_moe_mapping = {
+        "Qwen3VLMoeForConditionalGeneration": {
+            "Qwen3VLMoeTextExperts": NpuMoeFused.npu_moe_experts_forward,
+            "Qwen3VLMoeTextSparseMoeBlock": NpuMoeFused.npu_moe_sparse_block_forward,
+        },
+        "Qwen3MoeForCausalLM": {
+            "Qwen3MoeSparseMoeBlock": Qwen3NpuMoeFused.qwen3moe_sparse_moe_block_forward,
+        },
     }
 
 
@@ -336,8 +381,9 @@ class NpuFusedMoEKernel(BaseKernel):
 
         for module in model.modules():
             class_name = module.__class__.__name__
-            if class_name in target_moe_mapping:
+            if class_name in target_moe_mapping and not getattr(module, "_npu_moe_patched", False):
                 new_forward_func = target_moe_mapping[class_name]
                 module.forward = types.MethodType(new_forward_func, module)
+                module._npu_moe_patched = True
 
         return model
