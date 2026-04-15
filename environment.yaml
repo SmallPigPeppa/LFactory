@@ -16,8 +16,8 @@ dependencies:
   - cuda-version=12.8
   - cuda-toolkit=12.8
   - pip:
-      - torch @ https://download-r2.pytorch.org/whl/cu128/torch-2.9.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl
-      - torchvision @ https://download-r2.pytorch.org/whl/cu128/torchvision-0.24.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl
+      - torch @ https://download-r2.pytorch.org/whl/cu128/torch-2.9.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl
+      - torchvision @ https://download-r2.pytorch.org/whl/cu128/torchvision-0.24.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl
       - tqdm
       - wandb
       - deepspeed
