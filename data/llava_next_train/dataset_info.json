@@ -1,0 +1,11 @@
+{
+  "llava_next_data_train": {
+    "hf_hub_url": "lmms-lab/LLaVA-NeXT-Data",
+    "formatting": "sharegpt",
+    "split": "train",
+    "columns": {
+      "messages": "conversations",
+      "images": "image"
+    }
+  }
+}
