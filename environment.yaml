@@ -27,4 +27,4 @@ dependencies:
       - peft
       - omegaconf
       - jsonargparse
-      - lightning==2.2.0
+#      - lightning==2.2.0
