@@ -1,6 +1,6 @@
 {
   "demo_2000": {
-    "file_name": "/ppio_net0/datasets/parquet/llava_779k_demo/demo_2000",
+    "file_name": "/ppio_net0/datasets/parquet/llava_779k_demo_2000",
     "formatting": "sharegpt",
     "columns": {
       "messages": "conversations",
@@ -8,7 +8,7 @@
     }
   },
   "demo_10000": {
-    "file_name": "/ppio_net0/datasets/parquet/llava_779k_demo/demo_10000",
+    "file_name": "/ppio_net0/datasets/parquet/llava_779k_demo_10000",
     "formatting": "sharegpt",
     "columns": {
       "messages": "conversations",
