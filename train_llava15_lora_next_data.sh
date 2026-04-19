@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-WANDB_PROJECT=mllm-lightning python src/train.py examples/train_lora/llava15_lora_llava_next_data.yaml \
+WANDB_PROJECT=mllm-lightning python src/train.py examples/train_lora/llava15_lora_next_data.yaml \
   model_name_or_path=llava-hf/llava-1.5-7b-hf \
   dataset_dir=data/llava_next_train \
   dataset=llava_next_data_train \
