@@ -9,6 +9,7 @@ WANDB_PROJECT=mllm-lightning python src/train.py examples/train_lora/llava15_lor
   gradient_accumulation_steps=8 \
   num_train_epochs=1.0 \
   learning_rate=2e-4 \
+  warmup_ratio=0.03 \
   val_size=0.001 \
   bf16=true \
   fp16=false
