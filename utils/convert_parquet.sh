@@ -1,7 +1,7 @@
 python utils/convert_llava_779k_to_parquet.py \
   --hf_dataset lmms-lab/LLaVA-NeXT-Data \
   --split train \
-  --output_dir /ppio_net0/datasets/parquet/llava_779k \
+  --output_dir /ppio_net0/datasets/parquet/llava779k \
   --image_col image \
   --messages_col conversations \
   --row_error_mode skip \

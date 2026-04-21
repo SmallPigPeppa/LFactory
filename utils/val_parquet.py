@@ -2,7 +2,7 @@ from datasets import load_dataset, Image
 
 ds = load_dataset(
     "parquet",
-    data_files="/ppio_net0/datasets/parquet/llava_779k_demo_10000/*.parquet",
+    data_files="/ppio_net0/datasets/parquet/llava779k_demo10k/*.parquet",
     split="train"
 )
 
