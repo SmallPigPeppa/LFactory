@@ -1,37 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -euo pipefail
-set -x
 
-PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-cd "${PROJECT_ROOT}"
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
-CONFIG=${CONFIG:-examples/train_lora/llava_next_data_streaming_sft.yaml}
+CONFIG="examples/train_lora/llava_next_data_streaming_sft.yaml"
 
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}
-export FORCE_TORCHRUN=${FORCE_TORCHRUN:-1}
-export MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
+export NPROC_PER_NODE=${NPROC_PER_NODE:-8}
+export FORCE_TORCHRUN=1
 export MASTER_PORT=${MASTER_PORT:-29500}
-export NNODES=${NNODES:-1}
-export NODE_RANK=${NODE_RANK:-0}
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
-export NCCL_ASYNC_ERROR_HANDLING=${NCCL_ASYNC_ERROR_HANDLING:-1}
+export PYTHONPATH="${PWD}/src:${PYTHONPATH:-}"
 
-if [[ -z "${NPROC_PER_NODE:-}" ]]; then
-  IFS=',' read -ra DEVICES <<< "${CUDA_VISIBLE_DEVICES}"
-  export NPROC_PER_NODE=${#DEVICES[@]}
-fi
-
-if [[ "${NPROC_PER_NODE}" -ne 8 ]]; then
-  echo "Warning: NPROC_PER_NODE=${NPROC_PER_NODE}; expected 8 for the default 8-GPU run." >&2
-fi
-
-PYTHON_BIN=${PYTHON_BIN:-python}
-if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-  echo "Error: ${PYTHON_BIN} was not found in PATH." >&2
-  exit 127
-fi
-
-export PYTHONPATH="${PROJECT_ROOT}/src:${PYTHONPATH:-}"
-exec "${PYTHON_BIN}" -m llamafactory.cli train "${CONFIG}" "$@"
+python -m llamafactory.cli train "${CONFIG}" "$@"
