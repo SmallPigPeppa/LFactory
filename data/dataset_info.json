@@ -429,20 +429,6 @@
       "assistant_tag": "assistant"
     }
   },
-  "llava_next_data": {
-    "hf_hub_url": "lmms-lab/LLaVA-NeXT-Data",
-    "formatting": "sharegpt",
-    "columns": {
-      "messages": "conversations",
-      "images": "image"
-    },
-    "tags": {
-      "role_tag": "from",
-      "content_tag": "value",
-      "user_tag": "human",
-      "assistant_tag": "gpt"
-    }
-  },
   "pokemon_cap": {
     "hf_hub_url": "llamafactory/pokemon-gpt4o-captions",
     "formatting": "sharegpt",
