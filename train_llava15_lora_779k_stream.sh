@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python src/train.py examples/train_lora/llava15_lora_779k_stream.yaml \
+WANDB_PROJECT=CL-debug python src/train.py  examples/train_lora/llava15_lora_779k_stream.yaml \
   model_name_or_path=llava-hf/llava-1.5-7b-hf \
   dataset_dir=data/llava_779k_stream \
   dataset=llava_779k_train \
