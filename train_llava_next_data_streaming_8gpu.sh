@@ -27,16 +27,9 @@ if [[ "${NPROC_PER_NODE}" -ne 8 ]]; then
   echo "Warning: NPROC_PER_NODE=${NPROC_PER_NODE}; expected 8 for the default 8-GPU run." >&2
 fi
 
-if command -v llamafactory-cli >/dev/null 2>&1; then
-  exec llamafactory-cli train "${CONFIG}" "$@"
-fi
-
-if command -v python >/dev/null 2>&1; then
-  PYTHON_BIN=python
-elif command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN=python3
-else
-  echo "Error: neither llamafactory-cli nor python/python3 was found in PATH." >&2
+PYTHON_BIN=${PYTHON_BIN:-python}
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  echo "Error: ${PYTHON_BIN} was not found in PATH." >&2
   exit 127
 fi
 
