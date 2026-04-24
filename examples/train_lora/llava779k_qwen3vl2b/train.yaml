@@ -22,7 +22,7 @@ dataloader_num_workers: 4
 
 ### output
 output_dir: saves/qwen3vl-2b/lora/llava779k
-logging_steps: 10
+logging_steps: 1
 save_steps: 500
 plot_loss: true
 overwrite_output_dir: true
