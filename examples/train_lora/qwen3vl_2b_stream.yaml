@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: llava-hf/llava-v1.6-vicuna-7b-hf
+model_name_or_path: Qwen/Qwen3-VL-2B-Instruct
 trust_remote_code: true
 image_max_pixels: 589824
 
@@ -17,15 +17,14 @@ freeze_language_model: false
 
 ### dataset
 dataset: llava_next_data
-template: llava_next
+template: qwen3_vl_nothink
 cutoff_len: 2048
 streaming: true
 buffer_size: 2048
-preprocessing_num_workers: 8
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/llava-next-vicuna-7b/lora/llava-next-data-streaming
+output_dir: saves/qwen3-vl-2b/lora/llava-next-data-streaming
 logging_steps: 10
 save_steps: 1000
 plot_loss: true

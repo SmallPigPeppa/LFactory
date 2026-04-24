@@ -7,4 +7,4 @@ export NPROC_PER_NODE=8
 export FORCE_TORCHRUN=1
 export PYTHONPATH=src:$PYTHONPATH
 
-python -m llamafactory.cli train examples/train_lora/llava_next_data_streaming_sft.yaml
+python -m llamafactory.cli train examples/train_lora/qwen3vl_2b_stream.yaml
