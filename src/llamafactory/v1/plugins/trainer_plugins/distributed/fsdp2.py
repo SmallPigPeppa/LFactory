@@ -18,9 +18,16 @@ import os
 
 import torch
 import torch.distributed as dist
+import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 from peft.tuners.lora import LoraLayer
-from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict, set_model_state_dict
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    get_model_state_dict,
+    get_optimizer_state_dict,
+    set_model_state_dict,
+    set_optimizer_state_dict,
+)
 from torch.distributed.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
@@ -66,13 +73,58 @@ def save_model(model: HFModel, output_dir: str, processor: Processor) -> None:
         logger.info(f"Model saved to {output_dir}")
 
 
+def save_checkpoint(model: HFModel, optimizer: torch.optim.Optimizer, ckpt_dir: str, **kwargs) -> None:
+    save_ckpt_as_hf = kwargs.get("save_ckpt_as_hf", False)
+    processor = kwargs.get("processor", None)
+
+    # Always save DCP format for resume capability
+    options = StateDictOptions(full_state_dict=False, cpu_offload=True)
+
+    model_state = get_model_state_dict(model, options=options)
+    dcp.save(state_dict=model_state, checkpoint_id=os.path.join(ckpt_dir, "model"))
+
+    optim_state = get_optimizer_state_dict(model, optimizer, options=options)
+    dcp.save(state_dict=optim_state, checkpoint_id=os.path.join(ckpt_dir, "optimizer"))
+
+    # Additionally save HF format if requested
+    if save_ckpt_as_hf:
+        if DistributedInterface().get_rank() == 0:
+            logger.info("Gathering state dict for saving additional HF format checkpoint...")
+
+        hf_options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+        hf_state_dict = get_model_state_dict(model, options=hf_options)
+
+        if DistributedInterface().get_rank() == 0:
+            model_to_save = model.module if hasattr(model, "module") else model
+            hf_dir = os.path.join(ckpt_dir, "hf_model")
+            model_to_save.save_pretrained(hf_dir, state_dict=hf_state_dict, max_shard_size="4GB")
+            if processor is not None:
+                processor.save_pretrained(hf_dir, max_shard_size="4GB")
+
+            logger.info(f"Additional HF format checkpoint saved to {hf_dir}")
+
+
+def load_checkpoint(model: HFModel, optimizer: torch.optim.Optimizer, ckpt_dir: str, **kwargs) -> None:
+    options = StateDictOptions(full_state_dict=False, cpu_offload=True)
+
+    ckpt_model_dir = os.path.join(ckpt_dir, "model")
+    model_state = get_model_state_dict(model, options=options)
+    dcp.load(state_dict=model_state, checkpoint_id=ckpt_model_dir)
+    set_model_state_dict(model, model_state, options=options)
+
+    ckpt_optim_dir = os.path.join(ckpt_dir, "optimizer")
+    optim_state = get_optimizer_state_dict(model, optimizer, options=options)
+    dcp.load(state_dict=optim_state, checkpoint_id=ckpt_optim_dir)
+    set_optimizer_state_dict(model, optimizer, optim_state, options=options)
+
+
 class FSDP2Engine:
-    def __init__(self, dist_config: dict):
+    def __init__(self, dist_config: dict, bf16: bool = False):
         self.dist_interface = DistributedInterface()
         self.rank = self.dist_interface.get_rank()
         self.local_rank = self.dist_interface.get_local_rank()
         self.world_size = self.dist_interface.get_world_size()
-        self.mixed_precision = dist_config.get("mixed_precision", "bf16")
+        self.mixed_precision = "bf16" if bf16 else "fp32"
         self.reshard_after_forward = dist_config.get("reshard_after_forward", True)
         self.offload_params = dist_config.get("offload_params", False)
         self.pin_memory = dist_config.get("pin_memory", True)
@@ -95,10 +147,7 @@ class FSDP2Engine:
         if self.mixed_precision == "bf16":
             param_dtype = torch.bfloat16
             reduce_dtype = torch.float32
-        elif self.mixed_precision == "fp16":
-            param_dtype = torch.float16
-            reduce_dtype = torch.float32
-        else:
+        elif self.mixed_precision == "fp32":
             param_dtype = torch.float32
             reduce_dtype = torch.float32
 
@@ -293,7 +342,31 @@ class FSDP2Engine:
         else:
             model = self.prepare_model(model)
 
+        self._warmup_grad_norm(model)
+
         return model
+
+    def _warmup_grad_norm(self, model: HFModel) -> None:
+        """Warmup grad norm computation to initialize NCCL communication groups."""
+        if self.fsdp_mesh is None:
+            return
+
+        logger.info_rank0("Warming up grad norm computation...")
+
+        for param in model.parameters():
+            if param.requires_grad:
+                param.grad = torch.zeros_like(param)
+
+        with torch.no_grad():
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if isinstance(grad_norm, torch.distributed._tensor.DTensor):
+                grad_norm = grad_norm.full_tensor()
+
+        for param in model.parameters():
+            if param.requires_grad:
+                param.grad = None
+
+        logger.info_rank0("Grad norm warmup completed.")
 
     def _load_from_dcp(self, model: HFModel, dcp_path: str):
         import torch.distributed.checkpoint as dcp
