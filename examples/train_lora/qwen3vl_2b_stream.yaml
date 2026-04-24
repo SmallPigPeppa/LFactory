@@ -40,6 +40,7 @@ max_steps: 10000
 lr_scheduler_type: cosine
 warmup_ratio: 0.03
 bf16: true
+dispatch_batches: false
 ddp_timeout: 180000000
 resume_from_checkpoint: null
 
