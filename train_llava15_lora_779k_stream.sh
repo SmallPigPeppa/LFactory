@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-WANDB_PROJECT=CL-debug python src/train.py  examples/train_lora/llava15_lora_779k_stream.yaml \
+FORCE_TORCHRUN=1 llamafactory-cli train examples/train_lora/llava15_lora_779k_stream.yaml \
   model_name_or_path=llava-hf/llava-1.5-7b-hf \
   dataset_dir=data/llava_779k_stream \
   dataset=llava_779k_train \
@@ -9,7 +9,7 @@ WANDB_PROJECT=CL-debug python src/train.py  examples/train_lora/llava15_lora_779
   per_device_train_batch_size=1 \
   gradient_accumulation_steps=8 \
   learning_rate=2e-4 \
-  warmup_ratio=0.03 \
+  warmup_steps=300 \
   max_steps=10000 \
   streaming=true \
   val_size=1000 \
