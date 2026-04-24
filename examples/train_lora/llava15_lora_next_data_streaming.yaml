@@ -20,7 +20,7 @@ template: llava
 cutoff_len: 2048
 streaming: true
 buffer_size: 16384
-preprocessing_num_workers: 8
+preprocessing_num_workers: null
 dataloader_num_workers: 4
 
 ### output
