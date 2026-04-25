@@ -15,14 +15,13 @@
 import bisect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 
-if TYPE_CHECKING:
-    from transformers import PreTrainedTokenizer, ProcessorMixin
+from transformers import PreTrainedTokenizer, ProcessorMixin
 
-    from ...hparams import DataArguments
-    from ..template import Template
+from ...hparams import DataArguments
+from ..template import Template
 
 
 @dataclass

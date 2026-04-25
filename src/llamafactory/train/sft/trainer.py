@@ -17,7 +17,7 @@
 
 import json
 import os
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import torch
@@ -31,12 +31,11 @@ from ..fp8_utils import configure_fp8_environment, patch_accelerator_for_fp8, ve
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler
 
 
-if TYPE_CHECKING:
-    from torch.utils.data import Dataset
-    from transformers import ProcessorMixin
-    from transformers.trainer import PredictionOutput
+from torch.utils.data import Dataset
+from transformers import ProcessorMixin
+from transformers.trainer import PredictionOutput
 
-    from ...hparams import FinetuningArguments, ModelArguments, TrainingArguments
+from ...hparams import FinetuningArguments, ModelArguments, TrainingArguments
 
 
 logger = logging.get_logger(__name__)

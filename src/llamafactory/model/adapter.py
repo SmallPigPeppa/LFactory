@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import re
-from typing import TYPE_CHECKING
 
 import torch
 from peft import LoraConfig, LoraModel, OFTConfig, PeftModel, TaskType, get_peft_model
@@ -25,10 +24,9 @@ from .model_utils.quantization import QuantizationMethod
 from .model_utils.visual import COMPOSITE_MODELS, get_forbidden_modules, patch_target_modules
 
 
-if TYPE_CHECKING:
-    from transformers import PretrainedConfig, PreTrainedModel
+from transformers import PretrainedConfig, PreTrainedModel
 
-    from ..hparams import FinetuningArguments, ModelArguments
+from ..hparams import FinetuningArguments, ModelArguments
 
 
 logger = logging.get_logger(__name__)

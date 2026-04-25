@@ -18,7 +18,7 @@
 # limitations under the License.
 
 import math
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -42,10 +42,9 @@ if not is_transformers_version_greater_than("4.48.0"):
     )
 
 
-if TYPE_CHECKING:
-    from transformers import PretrainedConfig
+from transformers import PretrainedConfig
 
-    from ...hparams import ModelArguments
+from ...hparams import ModelArguments
 
 
 transformers_logger = transformers.utils.logging.get_logger(__name__)

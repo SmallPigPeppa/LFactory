@@ -18,7 +18,7 @@
 import gc
 import os
 import socket
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -45,10 +45,9 @@ except Exception:
     _is_bf16_available = False
 
 
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
+from numpy.typing import NDArray
 
-    from ..hparams import ModelArguments
+from ..hparams import ModelArguments
 
 
 logger = logging.get_logger(__name__)
@@ -342,5 +341,4 @@ def find_available_port() -> int:
     port = sock.getsockname()[1]
     sock.close()
     return port
-
 

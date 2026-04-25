@@ -1,7 +1,7 @@
 # Copyright 2025 the LlamaFactory team.
 # Licensed under the Apache License, Version 2.0.
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 import torch
 from transformers import Trainer
@@ -11,9 +11,8 @@ from transformers.trainer_pt_utils import get_parameter_names
 from ..extras import logging
 
 
-if TYPE_CHECKING:
-    from transformers import PreTrainedModel
-    from ..hparams import DataArguments, FinetuningArguments, ModelArguments, TrainingArguments
+from transformers import PreTrainedModel
+from ..hparams import DataArguments, FinetuningArguments, ModelArguments, TrainingArguments
 
 
 logger = logging.get_logger(__name__)

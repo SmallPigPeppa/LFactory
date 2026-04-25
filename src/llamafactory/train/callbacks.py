@@ -6,7 +6,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from peft import PeftModel
 from transformers import ProcessorMixin, TrainerCallback
@@ -18,9 +18,8 @@ from ..extras.constants import TRAINER_LOG
 from ..extras.misc import get_peak_memory, is_env_enabled
 
 
-if TYPE_CHECKING:
-    from transformers import TrainerControl, TrainerState, TrainingArguments
-    from ..hparams import DataArguments, FinetuningArguments, GeneratingArguments, ModelArguments
+from transformers import TrainerControl, TrainerState, TrainingArguments
+from ..hparams import DataArguments, FinetuningArguments, GeneratingArguments, ModelArguments
 
 
 logger = logging.get_logger(__name__)

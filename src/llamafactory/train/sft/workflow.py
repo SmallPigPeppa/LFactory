@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from ...data import SFTDataCollatorWith4DAttentionMask, get_dataset, get_template_and_fix_tokenizer
 from ...extras.constants import IGNORE_INDEX
@@ -29,10 +29,9 @@ from .metric import ComputeAccuracy, ComputeSimilarity, eval_logit_processor
 from .trainer import CustomSeq2SeqTrainer
 
 
-if TYPE_CHECKING:
-    from transformers import Seq2SeqTrainingArguments, TrainerCallback
+from transformers import Seq2SeqTrainingArguments, TrainerCallback
 
-    from ...hparams import DataArguments, FinetuningArguments, GeneratingArguments, ModelArguments
+from ...hparams import DataArguments, FinetuningArguments, GeneratingArguments, ModelArguments
 
 
 logger = get_logger(__name__)

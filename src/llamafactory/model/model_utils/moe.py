@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Union
+from typing import Union
 
 import torch
 from torch import nn
@@ -23,11 +23,10 @@ from ...extras.misc import check_version
 from ...extras.packages import is_transformers_version_greater_than
 
 
-if TYPE_CHECKING:
-    from torch import nn
-    from transformers import PretrainedConfig, PreTrainedModel
+from torch import nn
+from transformers import PretrainedConfig, PreTrainedModel
 
-    from ...hparams import ModelArguments
+from ...hparams import ModelArguments
 
 if is_transformers_version_greater_than("4.57.0"):
     from transformers.models.qwen3_omni_moe import modeling_qwen3_omni_moe

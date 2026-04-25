@@ -3,7 +3,7 @@
 
 import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import Any, Literal, Optional
 
 import torch
 from peft import PeftModel
@@ -19,9 +19,8 @@ else:  # pragma: no cover
     Image = None
 
 
-if TYPE_CHECKING:
-    from transformers import PreTrainedTokenizer, ProcessorMixin
-    from .template import Template
+from transformers import PreTrainedTokenizer, ProcessorMixin
+from .template import Template
 
 
 def prepare_4d_attention_mask(attention_mask_with_indices: "torch.Tensor", dtype: "torch.dtype") -> "torch.Tensor":

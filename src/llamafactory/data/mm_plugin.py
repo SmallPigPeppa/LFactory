@@ -6,7 +6,7 @@ import os
 from copy import deepcopy
 from dataclasses import dataclass
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TypedDict, Union
+from typing import Any, BinaryIO, Optional, TypedDict, Union
 
 import numpy as np
 import torch
@@ -25,27 +25,26 @@ else:  # pragma: no cover - image training requires Pillow
     ImageObject = object
 
 
-if TYPE_CHECKING:
-    from transformers import PreTrainedTokenizer, ProcessorMixin
-    from transformers.image_processing_utils import BaseImageProcessor
+from transformers import PreTrainedTokenizer, ProcessorMixin
+from transformers.image_processing_utils import BaseImageProcessor
 
-    class EncodedImage(TypedDict):
-        path: str | None
-        bytes: bytes | None
+class EncodedImage(TypedDict):
+    path: str | None
+    bytes: bytes | None
 
-    ImageInput = Union[str, bytes, EncodedImage, BinaryIO, ImageObject]
+ImageInput = Union[str, bytes, EncodedImage, BinaryIO, ImageObject]
 
-    class RegularizedImageOutput(TypedDict):
-        images: list[ImageObject]
+class RegularizedImageOutput(TypedDict):
+    images: list[ImageObject]
 
-    class MMProcessor(ProcessorMixin):
-        patch_size: int
-        image_seq_length: int
-        num_additional_image_tokens: int
-        vision_feature_select_strategy: str
+class MMProcessor(ProcessorMixin):
+    patch_size: int
+    image_seq_length: int
+    num_additional_image_tokens: int
+    vision_feature_select_strategy: str
 
-        def _get_number_of_features(self, orig_height: int, orig_width: int, height: int, width: int) -> int:
-            pass
+    def _get_number_of_features(self, orig_height: int, orig_width: int, height: int, width: int) -> int:
+        pass
 
 
 def _make_batched_images(images: list["ImageObject"], imglens: list[int]) -> list[list["ImageObject"]]:

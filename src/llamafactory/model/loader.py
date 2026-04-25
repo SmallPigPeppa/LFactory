@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 
 import os
-from typing import TYPE_CHECKING, Any, Optional, TypedDict
+from typing import Any, Optional, TypedDict
 
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
@@ -17,9 +17,8 @@ from .model_utils.visual import COMPOSITE_MODELS
 from .patcher import patch_config, patch_model, patch_processor, patch_tokenizer
 
 
-if TYPE_CHECKING:
-    from transformers import PretrainedConfig, PreTrainedModel, PreTrainedTokenizer, ProcessorMixin
-    from ..hparams import FinetuningArguments, ModelArguments
+from transformers import PretrainedConfig, PreTrainedModel, PreTrainedTokenizer, ProcessorMixin
+from ..hparams import FinetuningArguments, ModelArguments
 
 
 logger = logging.get_logger(__name__)

@@ -16,7 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 from transformers import BitsAndBytesConfig, EetqConfig, HqqConfig
@@ -28,10 +28,9 @@ from ...extras.constants import QuantizationMethod
 from ...extras.misc import check_version, get_current_device
 
 
-if TYPE_CHECKING:
-    from transformers import PretrainedConfig, PreTrainedTokenizer
+from transformers import PretrainedConfig, PreTrainedTokenizer
 
-    from ...hparams import ModelArguments
+from ...hparams import ModelArguments
 
 
 logger = logging.get_logger(__name__)

@@ -3,18 +3,17 @@
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..extras import logging
 from .data_utils import Role
 
 
-if TYPE_CHECKING:
-    from datasets import Dataset, IterableDataset
-    from transformers import Seq2SeqTrainingArguments
+from datasets import Dataset, IterableDataset
+from transformers import Seq2SeqTrainingArguments
 
-    from ..hparams import DataArguments
-    from .parser import DatasetAttr
+from ..hparams import DataArguments
+from .parser import DatasetAttr
 
 
 logger = logging.get_logger(__name__)

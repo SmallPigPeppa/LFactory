@@ -4,13 +4,11 @@
 import importlib.metadata
 import importlib.util
 from functools import lru_cache
-from typing import TYPE_CHECKING
 
 from packaging import version
 
 
-if TYPE_CHECKING:
-    from packaging.version import Version
+from packaging.version import Version
 
 
 def _is_package_available(name: str) -> bool:

@@ -17,7 +17,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 import numpy as np
 import torch
@@ -28,8 +28,7 @@ from ...extras.misc import numpify
 from ...extras.packages import is_jieba_available, is_rouge_available
 
 
-if TYPE_CHECKING:
-    from transformers import EvalPrediction, PreTrainedTokenizer
+from transformers import EvalPrediction, PreTrainedTokenizer
 
 
 if is_jieba_available():

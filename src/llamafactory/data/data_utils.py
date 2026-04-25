@@ -14,7 +14,7 @@
 
 import json
 from enum import StrEnum, unique
-from typing import TYPE_CHECKING, Any, Optional, TypedDict, Union
+from typing import Any, Optional, TypedDict, Union
 
 import fsspec
 from datasets import DatasetDict, concatenate_datasets, interleave_datasets
@@ -22,10 +22,9 @@ from datasets import DatasetDict, concatenate_datasets, interleave_datasets
 from ..extras import logging
 
 
-if TYPE_CHECKING:
-    from datasets import Dataset, IterableDataset
+from datasets import Dataset, IterableDataset
 
-    from ..hparams import DataArguments
+from ..hparams import DataArguments
 
 
 logger = logging.get_logger(__name__)
