@@ -18,7 +18,7 @@ from transformers.utils import is_torch_bf16_gpu_available, is_torch_npu_availab
 
 from ..extras import logging
 from ..extras.constants import CHECKPOINT_NAMES
-from ..extras.misc import check_dependencies, check_version, get_current_device, is_env_enabled
+from ..extras.misc import get_current_device, is_env_enabled
 from .data_args import DataArguments
 from .finetuning_args import FinetuningArguments
 from .generating_args import GeneratingArguments
@@ -27,7 +27,6 @@ from .training_args import TrainingArguments
 
 
 logger = logging.get_logger(__name__)
-check_dependencies()
 
 _TRAIN_ARGS = [ModelArguments, DataArguments, TrainingArguments, FinetuningArguments, GeneratingArguments]
 _TRAIN_CLS = tuple[ModelArguments, DataArguments, TrainingArguments, FinetuningArguments, GeneratingArguments]
@@ -91,19 +90,6 @@ def _verify_model_args(model_args: "ModelArguments", finetuning_args: "Finetunin
             raise ValueError("Quantized model only accepts a single adapter.")
 
 
-def _check_extra_dependencies(model_args: "ModelArguments", finetuning_args: "FinetuningArguments", training_args: "TrainingArguments") -> None:
-    if model_args.enable_liger_kernel:
-        check_version("liger-kernel", mandatory=True)
-    if finetuning_args.plot_loss:
-        check_version("matplotlib", mandatory=True)
-    if training_args.deepspeed:
-        check_version("deepspeed", mandatory=True)
-    if training_args.predict_with_generate:
-        check_version("jieba", mandatory=True)
-        check_version("nltk", mandatory=True)
-        check_version("rouge_chinese", mandatory=True)
-
-
 def get_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS:
     model_args, data_args, training_args, finetuning_args, generating_args = _parse_train_args(args)
 
@@ -152,7 +138,6 @@ def get_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS
         raise ValueError("FP8 training is incompatible with quantization.")
 
     _verify_model_args(model_args, finetuning_args)
-    _check_extra_dependencies(model_args, finetuning_args, training_args)
 
     if training_args.do_train and finetuning_args.finetuning_type == "lora" and model_args.quantization_bit is None:
         if model_args.resize_vocab and finetuning_args.additional_target is None:

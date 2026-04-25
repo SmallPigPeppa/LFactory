@@ -26,20 +26,6 @@ import transformers
 
 from ...extras import logging
 from ...extras.constants import SUPPORTED_CLASS_FOR_S2ATTN
-from ...extras.misc import check_version
-from ...extras.packages import is_transformers_version_greater_than
-
-
-if not is_transformers_version_greater_than("4.48.0"):
-    from transformers.modeling_flash_attention_utils import _flash_attention_forward
-    from transformers.models.llama.modeling_llama import (
-        Cache,
-        LlamaAttention,
-        LlamaFlashAttention2,
-        LlamaSdpaAttention,
-        apply_rotary_pos_emb,
-        repeat_kv,
-    )
 
 
 from transformers import PretrainedConfig
@@ -349,7 +335,19 @@ def llama_sdpa_attention_forward(
 
 
 def _apply_llama_patch() -> None:
-    check_version("transformers>=4.45.0,<4.48.0", mandatory=True)
+    global _flash_attention_forward, Cache, LlamaAttention, LlamaFlashAttention2, LlamaSdpaAttention
+    global apply_rotary_pos_emb, repeat_kv
+
+    from transformers.modeling_flash_attention_utils import _flash_attention_forward
+    from transformers.models.llama.modeling_llama import (
+        Cache,
+        LlamaAttention,
+        LlamaFlashAttention2,
+        LlamaSdpaAttention,
+        apply_rotary_pos_emb,
+        repeat_kv,
+    )
+
     LlamaAttention.forward = llama_attention_forward
     LlamaFlashAttention2.forward = llama_flash_attention_2_forward
     LlamaSdpaAttention.forward = llama_sdpa_attention_forward
