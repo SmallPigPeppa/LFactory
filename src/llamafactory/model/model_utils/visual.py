@@ -51,7 +51,7 @@ class CompositeModel:
             project_module = module
             for key in projector_key.split("."):
                 project_module = getattr(project_module, key, None)
-                if project_module is None: # i,e gemma4 bigger one, there is no embed_audio
+                if project_module is None:
                     logger.warning_rank0(f"Projector key {projector_key} not found in module {module.__class__.__name__}.")
                     break
 
@@ -124,16 +124,6 @@ class LlavaMultiModalProjectorForYiVL(torch.nn.Module):
         return hidden_states
 
 
-class LlavaMultiModalProjectorForYiVLForVLLM(LlavaMultiModalProjectorForYiVL):
-    def __init__(self, vision_hidden_size: int, text_hidden_size: int, projector_hidden_act: str) -> None:
-        super().__init__(config=None)
-
-        self.linear_1 = torch.nn.Linear(vision_hidden_size, text_hidden_size, bias=True)
-        self.linear_2 = torch.nn.LayerNorm(text_hidden_size, bias=True)
-        self.linear_3 = torch.nn.Linear(text_hidden_size, text_hidden_size, bias=True)
-        self.linear_4 = torch.nn.LayerNorm(text_hidden_size, bias=True)
-        self.act = ACT2FN[projector_hidden_act]
-
 
 def autocast_projector_dtype(model: "PreTrainedModel", model_args: "ModelArguments") -> None:
     r"""Cast projector output to half precision for fine-tuning quantized VLMs."""
@@ -161,7 +151,7 @@ def autocast_projector_dtype(model: "PreTrainedModel", model_args: "ModelArgumen
 def configure_visual_model(config: "PretrainedConfig") -> None:
     r"""Patch VLMs before loading them."""
     if getattr(config, "text_config", None) and not getattr(config, "hidden_size", None):
-        # required for ds zero3 and valuehead models
+        # required for DeepSpeed ZeRO-3 composite VLMs
         setattr(config, "hidden_size", getattr(config.text_config, "hidden_size", None))
 
     if getattr(config, "is_yi_vl_derived_model", None):
@@ -211,64 +201,6 @@ def patch_target_modules(
     else:
         return target_modules
 
-
-_register_composite_model(
-    model_type="dots_ocr",
-    projector_keys=["vision_tower.merger"],
-    vision_model_keys=["vision_tower"],
-    language_model_keys=["model", "lm_head"],
-    lora_conflict_keys=["merger"],
-)
-
-
-_register_composite_model(
-    model_type="gemma3",
-)
-
-
-_register_composite_model(
-    model_type="gemma3n",
-    vision_model_keys=["vision_tower", "audio_tower"],
-    lora_conflict_keys=["timm_model", "subsample_conv_projection"],
-)
-
-
-_register_composite_model(
-    model_type="gemma4",
-    projector_keys=["model.embed_vision", "model.embed_audio"],
-    vision_model_keys=["vision_tower", "audio_tower"],
-    lora_conflict_keys=["per_layer_projection_norm"],
-)
-
-
-# copied from qwen2vl
-_register_composite_model(
-    model_type="glm4v",
-    projector_keys=["visual.merger"],
-    vision_model_keys=["visual.patch_embed", "visual.blocks"],
-    language_model_keys=["language_model", "lm_head"],
-    lora_conflict_keys=["patch_embed"],
-)
-
-
-_register_composite_model(
-    model_type="glm4v_moe",
-    projector_keys=["visual.merger"],
-    vision_model_keys=["visual.patch_embed", "visual.blocks"],
-    language_model_keys=["language_model", "lm_head"],
-    lora_conflict_keys=["patch_embed"],
-)
-
-
-_register_composite_model(
-    model_type="glm_ocr",
-    projector_keys=["visual.merger"],
-    vision_model_keys=["visual.patch_embed", "visual.blocks"],
-    language_model_keys=["language_model", "lm_head"],
-    lora_conflict_keys=["patch_embed"],
-)
-
-
 _register_composite_model(
     model_type="internvl",
 )
@@ -278,88 +210,12 @@ _register_composite_model(
 )
 
 _register_composite_model(
-    model_type="Keye",
-    projector_keys=["mlp_AR"],
-    vision_model_keys=["visual.vision_model.patch_embedding", "visual.vision_model.encoder"],
-    language_model_keys=["model", "lm_head"],
-    lora_conflict_keys=["patch_embedding"],
-)
-
-
-_register_composite_model(
-    model_type="kimi_vl",
-)
-
-
-_register_composite_model(
-    model_type="llama4",
-    vision_model_keys=["vision_model"],
-)
-
-
-_register_composite_model(
     model_type="llava",
 )
-
 
 _register_composite_model(
     model_type="llava_next",
 )
-
-
-_register_composite_model(
-    model_type="llava_next_video",
-)
-
-
-_register_composite_model(
-    model_type="minicpmv",
-    projector_keys=["resampler"],
-    vision_model_keys=["vpm"],
-    language_model_keys=["llm"],
-)
-
-
-_register_composite_model(
-    model_type="minicpmo",
-    projector_keys=["resampler"],
-    vision_model_keys=["vpm", "apm", "audio_avg_pooler", "audio_projection_layer", "tts"],
-    language_model_keys=["llm"],
-    lora_conflict_keys=["audio_projection_layer"],
-)
-
-
-_register_composite_model(
-    model_type="mistral3",
-    projector_keys=["model.multi_modal_projector"],
-)
-
-
-_register_composite_model(
-    model_type="mllama",
-    vision_model_keys=["vision_model"],
-)
-
-
-_register_composite_model(
-    model_type="paligemma",
-)
-
-
-_register_composite_model(
-    model_type="qwen2_audio",
-    vision_model_keys=["audio_tower"],
-)
-
-
-_register_composite_model(
-    model_type="qwen2_5_omni_thinker",
-    projector_keys=["visual.merger", "audio_tower.proj"],
-    vision_model_keys=["visual.patch_embed", "visual.blocks", "audio_tower"],
-    language_model_keys=["model", "lm_head"],
-    lora_conflict_keys=["patch_embed"],
-)
-
 
 _register_composite_model(
     model_type="qwen2_vl",
@@ -369,7 +225,6 @@ _register_composite_model(
     lora_conflict_keys=["patch_embed"],
 )
 
-
 _register_composite_model(
     model_type="qwen2_5_vl",
     projector_keys=["visual.merger"],
@@ -377,7 +232,6 @@ _register_composite_model(
     language_model_keys=["language_model", "lm_head"],
     lora_conflict_keys=["patch_embed"],
 )
-
 
 _register_composite_model(
     model_type="qwen3_vl",
@@ -387,49 +241,10 @@ _register_composite_model(
     lora_conflict_keys=["patch_embed"],
 )
 
-
 _register_composite_model(
     model_type="qwen3_vl_moe",
     projector_keys=["visual.merger"],
     vision_model_keys=["visual.pos_embed", "visual.patch_embed", "visual.blocks", "visual.deepstack_merger_list"],
     language_model_keys=["language_model", "lm_head"],
     lora_conflict_keys=["patch_embed"],
-)
-
-
-_register_composite_model(
-    model_type="qwen3_omni_moe_thinker",
-    projector_keys=["visual.merger", "audio_tower.proj"],
-    vision_model_keys=[
-        "visual.pos_embed",
-        "visual.patch_embed",
-        "visual.blocks",
-        "visual.deepstack_merger_list",
-        "audio_tower",
-    ],
-    language_model_keys=["language_model", "lm_head"],
-    lora_conflict_keys=["patch_embed"],
-)
-
-
-_register_composite_model(
-    model_type="qwen3_5",
-    projector_keys=["model.visual.merger"],
-    vision_model_keys=["visual.pos_embed", "visual.patch_embed", "visual.blocks"],
-    language_model_keys=["language_model", "lm_head"],
-    lora_conflict_keys=["patch_embed"],
-)
-
-
-_register_composite_model(
-    model_type="qwen3_5_moe",
-    projector_keys=["model.visual.merger"],
-    vision_model_keys=["visual.pos_embed", "visual.patch_embed", "visual.blocks"],
-    language_model_keys=["language_model", "lm_head"],
-    lora_conflict_keys=["patch_embed"],
-)
-
-
-_register_composite_model(
-    model_type="video_llava",
 )

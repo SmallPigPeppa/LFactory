@@ -98,17 +98,14 @@ def check_dependencies() -> None:
     check_version("datasets>=2.16.0,<=4.0.0")
     check_version("accelerate>=1.3.0,<=1.11.0")
     check_version("peft>=0.18.0,<=0.18.1")
-    check_version("trl>=0.18.0,<=0.24.0")
 
 
-def calculate_tps(dataset: list[dict[str, Any]], metrics: dict[str, float], stage: Literal["sft", "rm"]) -> float:
+def calculate_tps(dataset: list[dict[str, Any]], metrics: dict[str, float], stage: Literal["sft", "pt"]) -> float:
     r"""Calculate effective tokens per second."""
     effective_token_num = 0
     for data in dataset:
         if stage == "sft":
             effective_token_num += len(data["input_ids"])
-        elif stage == "rm":
-            effective_token_num += len(data["chosen_input_ids"]) + len(data["rejected_input_ids"])
 
     result = effective_token_num * metrics["epoch"] / metrics["train_runtime"]
     return result / dist.get_world_size() if dist.is_initialized() else result
@@ -336,12 +333,6 @@ def use_openmind() -> bool:
     return is_env_enabled("USE_OPENMIND_HUB")
 
 
-def use_ray() -> bool:
-    return is_env_enabled("USE_RAY")
-
-
-def use_kt() -> bool:
-    return is_env_enabled("USE_KT")
 
 
 def find_available_port() -> int:
@@ -353,13 +344,3 @@ def find_available_port() -> int:
     return port
 
 
-def fix_proxy(ipv6_enabled: bool = False) -> None:
-    r"""Fix proxy settings for gradio ui."""
-    os.environ["no_proxy"] = "localhost,127.0.0.1,0.0.0.0"
-    if ipv6_enabled:
-        os.environ.pop("http_proxy", None)
-        os.environ.pop("HTTP_PROXY", None)
-        os.environ.pop("https_proxy", None)
-        os.environ.pop("HTTPS_PROXY", None)
-        os.environ.pop("all_proxy", None)
-        os.environ.pop("ALL_PROXY", None)

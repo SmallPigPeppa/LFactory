@@ -16,18 +16,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import random
 from typing import TYPE_CHECKING, Any
 
 import torch
-from datasets import load_dataset
-from transformers import BitsAndBytesConfig, EetqConfig, GPTQConfig, HqqConfig
+from transformers import BitsAndBytesConfig, EetqConfig, HqqConfig
 from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.modeling_utils import is_fsdp_enabled
 
 from ...extras import logging
-from ...extras.constants import FILEEXT2TYPE, QuantizationMethod
+from ...extras.constants import QuantizationMethod
 from ...extras.misc import check_version, get_current_device
 
 
@@ -40,44 +37,6 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
-def _get_quantization_dataset(tokenizer: "PreTrainedTokenizer", model_args: "ModelArguments") -> list[dict[str, Any]]:
-    r"""Prepare the tokenized dataset to perform AutoGPTQ. Do not use tensor output for JSON serialization."""
-    if os.path.isfile(model_args.export_quantization_dataset):
-        data_path = FILEEXT2TYPE.get(model_args.export_quantization_dataset.split(".")[-1], None)
-        data_files = model_args.export_quantization_dataset
-    else:
-        data_path = model_args.export_quantization_dataset
-        data_files = None
-
-    dataset = load_dataset(
-        path=data_path,
-        data_files=data_files,
-        split="train",
-        cache_dir=model_args.cache_dir,
-        token=model_args.hf_hub_token,
-    )
-
-    samples = []
-    maxlen = model_args.export_quantization_maxlen
-    for _ in range(model_args.export_quantization_nsamples):
-        n_try = 0
-        while True:
-            if n_try > 100:
-                raise ValueError("Cannot find satisfying example, considering decrease `export_quantization_maxlen`.")
-
-            sample_idx = random.randint(0, len(dataset) - 1)
-            sample: dict[str, torch.Tensor] = tokenizer(dataset[sample_idx]["text"], return_tensors="pt")
-            n_try += 1
-            if sample["input_ids"].size(1) > maxlen:
-                break  # TODO: fix large maxlen
-
-        word_idx = random.randint(0, sample["input_ids"].size(1) - maxlen - 1)
-        input_ids = sample["input_ids"][:, word_idx : word_idx + maxlen]
-        attention_mask = sample["attention_mask"][:, word_idx : word_idx + maxlen]
-        samples.append({"input_ids": input_ids.tolist(), "attention_mask": attention_mask.tolist()})
-
-    return samples
-
 
 def configure_quantization(
     config: "PretrainedConfig",
@@ -86,7 +45,7 @@ def configure_quantization(
     is_trainable: bool,
     init_kwargs: dict[str, Any],
 ) -> None:
-    r"""Priority: PTQ-quantized (train/infer) > AutoGPTQ (export) > On-the-fly quantization (train/infer)."""
+    r"""Priority: PTQ-quantized checkpoints > on-the-fly train-time quantization."""
     if getattr(config, "quantization_config", None):  # ptq
         if model_args.quantization_bit is not None:
             logger.warning_rank0("`quantization_bit` will not affect on the PTQ-quantized models.")
@@ -129,39 +88,6 @@ def configure_quantization(
         quant_bits = quantization_config.get("bits", "?")
         logger.info_rank0(f"Loading {quant_bits}-bit {quant_method.upper()}-quantized model.")
 
-    elif model_args.export_quantization_bit is not None:  # gptqmodel
-        if model_args.export_quantization_bit not in [8, 4, 3, 2]:
-            raise ValueError("AutoGPTQ only accepts 2/3/4/8-bit quantization.")
-
-        check_version("optimum>=1.24.0", mandatory=True)
-        check_version("gptqmodel>=2.0.0", mandatory=True)
-        from accelerate.utils import get_max_memory
-
-        if getattr(config, "model_type", None) == "chatglm":
-            raise ValueError("ChatGLM model is not supported yet.")
-
-        try:
-            from optimum.gptq import utils as gq_utils
-
-            if "language_model.model.layers" not in gq_utils.BLOCK_PATTERNS:
-                gq_utils.BLOCK_PATTERNS.insert(0, "language_model.model.layers")
-        except ImportError:
-            pass
-
-        block_name_to_quantize = None
-        if getattr(config, "model_type", None) in ["gemma3", "paligemma"]:
-            block_name_to_quantize = "language_model.model.layers"
-
-        init_kwargs["quantization_config"] = GPTQConfig(
-            bits=model_args.export_quantization_bit,
-            tokenizer=tokenizer,
-            dataset=_get_quantization_dataset(tokenizer, model_args),
-            block_name_to_quantize=block_name_to_quantize,
-        )
-        init_kwargs["device_map"] = "auto"
-        init_kwargs["max_memory"] = get_max_memory()
-        model_args.compute_dtype = torch.float16  # force fp16 for gptqmodel
-        logger.info_rank0(f"Quantizing model to {model_args.export_quantization_bit} bit with GPTQModel.")
 
     elif model_args.quantization_bit is not None:  # on-the-fly
         if model_args.quantization_method == QuantizationMethod.BNB:

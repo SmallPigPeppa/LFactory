@@ -58,13 +58,6 @@ def print_env() -> None:
         info["CANN version"] = torch.version.cann
 
     try:
-        import trl  # type: ignore
-
-        info["TRL version"] = trl.__version__
-    except Exception:
-        pass
-
-    try:
         import deepspeed  # type: ignore
 
         info["DeepSpeed version"] = deepspeed.__version__
@@ -78,12 +71,6 @@ def print_env() -> None:
     except Exception:
         pass
 
-    try:
-        import vllm
-
-        info["vLLM version"] = vllm.__version__
-    except Exception:
-        pass
 
     try:
         import subprocess

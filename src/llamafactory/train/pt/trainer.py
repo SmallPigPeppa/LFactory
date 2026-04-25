@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import MethodType
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -58,12 +57,6 @@ class CustomTrainer(Trainer):
 
         if processor is not None:
             self.add_callback(SaveProcessorCallback(processor))
-
-        if finetuning_args.use_badam:
-            from badam import BAdamCallback, clip_grad_norm_old_version  # type: ignore
-
-            self.accelerator.clip_grad_norm_ = MethodType(clip_grad_norm_old_version, self.accelerator)
-            self.add_callback(BAdamCallback)
 
         if training_args.fp8 and hasattr(self, "accelerator"):  # verify FP8 status after trainer initialization
             verify_fp8_status(self.accelerator, training_args)
