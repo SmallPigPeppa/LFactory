@@ -1,7 +1,7 @@
 # Copyright 2025 the KVCache.AI team, Approaching AI, and the LlamaFactory team.
 # Licensed under the Apache License, Version 2.0.
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch.distributed as dist
 from transformers import EarlyStoppingCallback
@@ -13,7 +13,8 @@ from .pt import run_pt
 from .sft import run_sft
 
 
-from transformers import TrainerCallback
+if TYPE_CHECKING:
+    from transformers import TrainerCallback
 
 
 logger = logging.get_logger(__name__)

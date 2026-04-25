@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 
 from types import MethodType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from transformers import GenerationMixin, PreTrainedTokenizerBase
@@ -22,8 +22,9 @@ from .model_utils.rope import configure_rope
 from .model_utils.visual import autocast_projector_dtype, configure_visual_model
 
 
-from transformers import PretrainedConfig, PreTrainedModel, PreTrainedTokenizer, ProcessorMixin
-from ..hparams import ModelArguments
+if TYPE_CHECKING:
+    from transformers import PretrainedConfig, PreTrainedModel, PreTrainedTokenizer, ProcessorMixin
+    from ..hparams import ModelArguments
 
 
 logger = logging.get_logger(__name__)

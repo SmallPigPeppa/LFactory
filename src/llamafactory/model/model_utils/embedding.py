@@ -14,7 +14,7 @@
 
 import math
 from contextlib import nullcontext
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from transformers.integrations import is_deepspeed_zero3_enabled
@@ -22,7 +22,8 @@ from transformers.integrations import is_deepspeed_zero3_enabled
 from ...extras import logging
 
 
-from transformers import PreTrainedModel, PreTrainedTokenizer
+if TYPE_CHECKING:
+    from transformers import PreTrainedModel, PreTrainedTokenizer
 
 
 logger = logging.get_logger(__name__)

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
 
 from ...extras import logging
 
@@ -19,9 +20,10 @@ from ...extras import logging
 logger = logging.get_logger(__name__)
 
 
-from transformers import PretrainedConfig
+if TYPE_CHECKING:
+    from transformers import PretrainedConfig
 
-from ...hparams import ModelArguments
+    from ...hparams import ModelArguments
 
 
 def configure_kv_cache(config: "PretrainedConfig", model_args: "ModelArguments", is_trainable: bool) -> None:

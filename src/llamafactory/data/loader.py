@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 
 import os
-from typing import Literal, Optional, Union
+from typing import TYPE_CHECKING, Literal, Optional, Union
 
 import numpy as np
 from datasets import DatasetDict, load_dataset, load_from_disk
@@ -15,14 +15,15 @@ from .parser import get_dataset_list
 from .processor import PackedSupervisedDatasetProcessor, PretrainDatasetProcessor, SupervisedDatasetProcessor
 
 
-from datasets import Dataset, IterableDataset
-from transformers import PreTrainedTokenizer, ProcessorMixin, Seq2SeqTrainingArguments
+if TYPE_CHECKING:
+    from datasets import Dataset, IterableDataset
+    from transformers import PreTrainedTokenizer, ProcessorMixin, Seq2SeqTrainingArguments
 
-from ..hparams import DataArguments, ModelArguments
-from .data_utils import DatasetModule
-from .parser import DatasetAttr
-from .processor import DatasetProcessor
-from .template import Template
+    from ..hparams import DataArguments, ModelArguments
+    from .data_utils import DatasetModule
+    from .parser import DatasetAttr
+    from .processor import DatasetProcessor
+    from .template import Template
 
 
 logger = logging.get_logger(__name__)

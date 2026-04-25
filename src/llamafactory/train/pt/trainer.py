@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from transformers import Trainer
@@ -23,9 +23,10 @@ from ..fp8_utils import configure_fp8_environment, patch_accelerator_for_fp8, ve
 from ..trainer_utils import create_custom_optimizer, create_custom_scheduler
 
 
-from transformers import ProcessorMixin
+if TYPE_CHECKING:
+    from transformers import ProcessorMixin
 
-from ...hparams import FinetuningArguments, ModelArguments, TrainingArguments
+    from ...hparams import FinetuningArguments, ModelArguments, TrainingArguments
 
 
 class CustomTrainer(Trainer):

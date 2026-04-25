@@ -12,19 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 from transformers.integrations import is_deepspeed_zero3_enabled
 
-from transformers import PretrainedConfig, PreTrainedModel
+from ...extras.misc import check_version
+from ...extras.packages import is_transformers_version_greater_than
 
-from ...hparams import ModelArguments
+
+if TYPE_CHECKING:
+    from torch import nn
+    from transformers import PretrainedConfig, PreTrainedModel
+
+    from ...hparams import ModelArguments
+
+if is_transformers_version_greater_than("4.57.0"):
+    from transformers.models.qwen3_omni_moe import modeling_qwen3_omni_moe
 
 
 def _set_z3_leaf_modules(model: "PreTrainedModel", leaf_modules: list[Union["nn.Module", str]]) -> None:
+    check_version("deepspeed>=0.13.0")
     from deepspeed.utils import set_z3_leaf_modules  # type: ignore
 
     set_z3_leaf_modules(model, leaf_modules)
@@ -197,8 +207,6 @@ def configure_moe(config: "PretrainedConfig", model_args: "ModelArguments", is_t
 class Qwen3OmniMoeThinkerTextSparseMoeBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
-        from transformers.models.qwen3_omni_moe import modeling_qwen3_omni_moe
-
         self.num_experts = config.num_experts
         self.top_k = config.num_experts_per_tok
         self.norm_topk_prob = config.norm_topk_prob

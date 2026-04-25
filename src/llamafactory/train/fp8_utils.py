@@ -14,12 +14,13 @@
 
 import os
 import types
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..extras import logging
 
 
-from ..hparams import TrainingArguments
+if TYPE_CHECKING:
+    from ..hparams import TrainingArguments
 
 
 logger = logging.get_logger(__name__)

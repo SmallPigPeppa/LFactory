@@ -3,14 +3,15 @@
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ...extras import logging
 from ...extras.constants import IGNORE_INDEX
 from .processor_utils import DatasetProcessor, greedy_knapsack, infer_seqlen
 
 
-from ..mm_plugin import ImageInput
+if TYPE_CHECKING:
+    from ..mm_plugin import ImageInput
 
 
 logger = logging.get_logger(__name__)

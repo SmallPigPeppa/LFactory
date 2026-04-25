@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
 
 from ...extras import logging
 from ...extras.constants import AttentionFunction
+from ...extras.packages import is_torch_version_greater_than
 
 
-from transformers import PretrainedConfig
+if TYPE_CHECKING:
+    from transformers import PretrainedConfig
 
-from ...hparams import ModelArguments
+    from ...hparams import ModelArguments
 
 
 logger = logging.get_logger(__name__)
@@ -55,6 +58,10 @@ def configure_attn_implementation(config: "PretrainedConfig", model_args: "Model
         requested_attn_implementation = "eager"
 
     elif model_args.flash_attn == AttentionFunction.SDPA:
+        if not is_torch_version_greater_than("2.1.1"):
+            logger.warning_rank0("torch>=2.1.1 is required for SDPA attention.")
+            return
+
         requested_attn_implementation = "sdpa"
     elif model_args.flash_attn == AttentionFunction.FA2:
         from transformers import is_torch_npu_available

@@ -18,7 +18,7 @@
 import gc
 import os
 import socket
-from typing import Any, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -33,6 +33,7 @@ from transformers.utils import (
     is_torch_npu_available,
     is_torch_xpu_available,
 )
+from transformers.utils.versions import require_version
 
 from . import logging
 
@@ -44,7 +45,10 @@ except Exception:
     _is_bf16_available = False
 
 
-from numpy.typing import NDArray
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from ..hparams import ModelArguments
 
 
 logger = logging.get_logger(__name__)
@@ -67,6 +71,33 @@ class AverageMeter:
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+
+def check_version(requirement: str, mandatory: bool = False) -> None:
+    r"""Optionally check the package version."""
+    if is_env_enabled("DISABLE_VERSION_CHECK") and not mandatory:
+        logger.warning_rank0_once("Version checking has been disabled, may lead to unexpected behaviors.")
+        return
+
+    if "gptmodel" in requirement or "autoawq" in requirement:
+        pip_command = f"pip install {requirement} --no-build-isolation"
+    else:
+        pip_command = f"pip install {requirement}"
+
+    if mandatory:
+        hint = f"To fix: run `{pip_command}`."
+    else:
+        hint = f"To fix: run `{pip_command}` or set `DISABLE_VERSION_CHECK=1` to skip this check."
+
+    require_version(requirement, hint)
+
+
+def check_dependencies() -> None:
+    r"""Check the version of the required packages."""
+    check_version("transformers>=4.55.0,<=5.2.0")
+    check_version("datasets>=2.16.0,<=4.0.0")
+    check_version("accelerate>=1.3.0,<=1.11.0")
+    check_version("peft>=0.18.0,<=0.18.1")
 
 
 def calculate_tps(dataset: list[dict[str, Any]], metrics: dict[str, float], stage: Literal["sft", "pt"]) -> float:
@@ -262,6 +293,7 @@ def try_download_model_from_other_hub(model_args: "ModelArguments") -> str:
         return model_args.model_name_or_path
 
     if use_modelscope():
+        check_version("modelscope>=1.14.0", mandatory=True)
         from modelscope import snapshot_download  # type: ignore
         from modelscope.hub.api import HubApi  # type: ignore
 
@@ -280,6 +312,7 @@ def try_download_model_from_other_hub(model_args: "ModelArguments") -> str:
         return model_path
 
     if use_openmind():
+        check_version("openmind>=0.8.0", mandatory=True)
         from openmind.utils.hub import snapshot_download  # type: ignore
 
         with WeakFileLock(os.path.abspath(os.path.expanduser("~/.cache/llamafactory/openmind.lock"))):
@@ -309,3 +342,5 @@ def find_available_port() -> int:
     port = sock.getsockname()[1]
     sock.close()
     return port
+
+

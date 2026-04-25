@@ -16,7 +16,7 @@
 # limitations under the License.
 
 import math
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from transformers import DataCollatorForLanguageModeling
 
@@ -27,9 +27,10 @@ from ..trainer_utils import create_modelcard_and_push
 from .trainer import CustomTrainer
 
 
-from transformers import Seq2SeqTrainingArguments, TrainerCallback
+if TYPE_CHECKING:
+    from transformers import Seq2SeqTrainingArguments, TrainerCallback
 
-from ...hparams import DataArguments, FinetuningArguments, ModelArguments
+    from ...hparams import DataArguments, FinetuningArguments, ModelArguments
 
 
 def run_pt(

@@ -15,7 +15,7 @@
 import re
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from typing_extensions import override
 
@@ -25,12 +25,13 @@ from .formatter import EmptyFormatter, FunctionFormatter, StringFormatter, ToolF
 from .mm_plugin import get_mm_plugin
 
 
-from transformers import PreTrainedTokenizer
+if TYPE_CHECKING:
+    from transformers import PreTrainedTokenizer
 
-from ..hparams import DataArguments
-from .formatter import SLOTS, Formatter
-from .mm_plugin import BasePlugin
-from .tool_utils import FunctionCall
+    from ..hparams import DataArguments
+    from .formatter import SLOTS, Formatter
+    from .mm_plugin import BasePlugin
+    from .tool_utils import FunctionCall
 
 
 logger = logging.get_logger(__name__)

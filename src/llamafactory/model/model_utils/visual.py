@@ -16,7 +16,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import transformers
@@ -26,9 +26,10 @@ from transformers.activations import ACT2FN
 from ...extras import logging
 
 
-from transformers import LlavaConfig, PretrainedConfig, PreTrainedModel
+if TYPE_CHECKING:
+    from transformers import LlavaConfig, PretrainedConfig, PreTrainedModel
 
-from ...hparams import FinetuningArguments, ModelArguments
+    from ...hparams import FinetuningArguments, ModelArguments
 
 
 logger = logging.get_logger(__name__)

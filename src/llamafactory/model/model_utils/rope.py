@@ -17,14 +17,16 @@
 # limitations under the License.
 
 import math
+from typing import TYPE_CHECKING
 
 from ...extras import logging
 from ...extras.constants import RopeScaling
 
 
-from transformers import PretrainedConfig
+if TYPE_CHECKING:
+    from transformers import PretrainedConfig
 
-from ...hparams import ModelArguments
+    from ...hparams import ModelArguments
 
 
 logger = logging.get_logger(__name__)

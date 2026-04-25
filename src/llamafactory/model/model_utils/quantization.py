@@ -16,7 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from transformers import BitsAndBytesConfig, EetqConfig, HqqConfig
@@ -25,12 +25,13 @@ from transformers.modeling_utils import is_fsdp_enabled
 
 from ...extras import logging
 from ...extras.constants import QuantizationMethod
-from ...extras.misc import get_current_device
+from ...extras.misc import check_version, get_current_device
 
 
-from transformers import PretrainedConfig, PreTrainedTokenizer
+if TYPE_CHECKING:
+    from transformers import PretrainedConfig, PreTrainedTokenizer
 
-from ...hparams import ModelArguments
+    from ...hparams import ModelArguments
 
 
 logger = logging.get_logger(__name__)
@@ -73,10 +74,15 @@ def configure_quantization(
             init_kwargs["ignore_mismatched_sizes"] = True
 
         if quant_method == QuantizationMethod.GPTQ:
+            check_version("gptqmodel>=2.0.0", mandatory=True)
             quantization_config.pop("disable_exllama", None)  # remove deprecated args
             quantization_config["use_exllama"] = False  # disable exllama
 
+        if quant_method == QuantizationMethod.AWQ:
+            check_version("autoawq", mandatory=True)
+
         if quant_method == QuantizationMethod.AQLM:
+            check_version("aqlm>=1.1.0", mandatory=True)
             quantization_config["bits"] = 2
 
         quant_bits = quantization_config.get("bits", "?")
@@ -86,8 +92,10 @@ def configure_quantization(
     elif model_args.quantization_bit is not None:  # on-the-fly
         if model_args.quantization_method == QuantizationMethod.BNB:
             if model_args.quantization_bit == 8:
+                check_version("bitsandbytes>=0.37.0", mandatory=True)
                 init_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
             elif model_args.quantization_bit == 4:
+                check_version("bitsandbytes>=0.39.0", mandatory=True)
                 init_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=model_args.compute_dtype,
@@ -104,6 +112,8 @@ def configure_quantization(
             if is_deepspeed_zero3_enabled() or is_fsdp_enabled() or model_args.quantization_device_map == "auto":
                 if model_args.quantization_bit != 4:
                     raise ValueError("Only 4-bit quantized model can use fsdp+qlora or auto device map.")
+
+                check_version("bitsandbytes>=0.43.0", mandatory=True)
             else:
                 init_kwargs["device_map"] = {"": get_current_device()}  # change auto device map for inference
 
@@ -115,6 +125,7 @@ def configure_quantization(
             if is_deepspeed_zero3_enabled() or is_fsdp_enabled():
                 raise ValueError("HQQ quantization is incompatible with DeepSpeed ZeRO-3 or FSDP.")
 
+            check_version("hqq", mandatory=True)
             init_kwargs["quantization_config"] = HqqConfig(
                 nbits=model_args.quantization_bit, quant_zero=False, quant_scale=False, axis=0
             )  # use ATEN kernel (axis=0) for performance
@@ -126,5 +137,6 @@ def configure_quantization(
             if is_deepspeed_zero3_enabled() or is_fsdp_enabled():
                 raise ValueError("EETQ quantization is incompatible with DeepSpeed ZeRO-3 or FSDP.")
 
+            check_version("eetq", mandatory=True)
             init_kwargs["quantization_config"] = EetqConfig()
             logger.info_rank0(f"Quantizing model to {model_args.quantization_bit} bit with EETQ.")

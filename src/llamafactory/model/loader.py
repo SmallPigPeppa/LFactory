@@ -2,12 +2,14 @@
 # Licensed under the Apache License, Version 2.0.
 
 import os
-from typing import Any, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Optional, TypedDict
 
+import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
 
 from ..extras import logging
 from ..extras.misc import count_parameters, skip_check_imports, try_download_model_from_other_hub
+from ..extras.packages import is_torch_version_greater_than
 from .adapter import init_adapter
 from .model_utils.liger_kernel import apply_liger_kernel
 from .model_utils.misc import register_autoclass
@@ -15,8 +17,9 @@ from .model_utils.visual import COMPOSITE_MODELS
 from .patcher import patch_config, patch_model, patch_processor, patch_tokenizer
 
 
-from transformers import PretrainedConfig, PreTrainedModel, PreTrainedTokenizer, ProcessorMixin
-from ..hparams import FinetuningArguments, ModelArguments
+if TYPE_CHECKING:
+    from transformers import PretrainedConfig, PreTrainedModel, PreTrainedTokenizer, ProcessorMixin
+    from ..hparams import FinetuningArguments, ModelArguments
 
 
 logger = logging.get_logger(__name__)
@@ -123,6 +126,10 @@ def load_model(
     patch_model(model, tokenizer, model_args, is_trainable, add_valuehead=False)
     register_autoclass(config, model, tokenizer)
     model = init_adapter(config, model, model_args, finetuning_args, is_trainable)
+
+    if is_torch_version_greater_than("2.9.0") and not is_torch_version_greater_than("2.10.0"):
+        if any(isinstance(m, torch.nn.Conv3d) for m in model.modules()):
+            raise ValueError("Unsupported torch 2.9.x with Conv3D. Please downgrade torch to <2.9 or remove Conv3D.")
 
     if not is_trainable:
         model.requires_grad_(False)

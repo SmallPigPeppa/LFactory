@@ -21,7 +21,7 @@ import os
 from collections.abc import Callable
 from functools import WRAPPER_ASSIGNMENTS, partial, wraps
 from types import MethodType
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 
@@ -29,9 +29,10 @@ from ...extras import logging
 from ...extras.constants import LAYERNORM_NAMES
 
 
-from transformers import PreTrainedModel
+if TYPE_CHECKING:
+    from transformers import PreTrainedModel
 
-from ...hparams import ModelArguments
+    from ...hparams import ModelArguments
 
 
 logger = logging.get_logger(__name__)
