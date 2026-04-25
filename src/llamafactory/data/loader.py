@@ -29,6 +29,21 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
+_TOKENIZED_TEXT_COLUMNS = {"input_ids", "attention_mask", "labels", "position_ids", "token_type_ids", "images", "packing_params"}
+
+
+def _sanitize_tokenized_dataset(dataset: Union["Dataset", "IterableDataset", DatasetDict]) -> Union["Dataset", "IterableDataset", DatasetDict]:
+    if isinstance(dataset, DatasetDict):
+        return DatasetDict({key: _sanitize_tokenized_dataset(value) for key, value in dataset.items()})
+
+    column_names = set(getattr(dataset, "column_names", []) or [])
+    extra_columns = sorted(column_names - _TOKENIZED_TEXT_COLUMNS)
+    if extra_columns:
+        logger.warning_rank0(f"Dropping unused columns from tokenized dataset: {', '.join(extra_columns)}.")
+        dataset = dataset.remove_columns(extra_columns)
+    return dataset
+
+
 def _collect_parquet_files(path: str) -> list[str]:
     if os.path.isdir(path):
         files = [os.path.join(path, name) for name in sorted(os.listdir(path)) if name.endswith(".parquet")]
@@ -160,7 +175,7 @@ def get_dataset(
     if data_args.tokenized_path is not None:
         if has_tokenized_data(data_args.tokenized_path):
             logger.warning_rank0("Loading tokenized dataset from disk will ignore other data arguments.")
-            tokenized_data = load_from_disk(data_args.tokenized_path)
+            tokenized_data = _sanitize_tokenized_dataset(load_from_disk(data_args.tokenized_path))
             dataset_module = get_dataset_module(tokenized_data)
             if data_args.streaming:
                 dataset_module["train_dataset"] = dataset_module["train_dataset"].to_iterable_dataset()

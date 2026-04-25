@@ -102,9 +102,13 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, "torch.Tensor"]:
         images_per_sample: list[list[Any]] = []
+        text_feature_keys = {"input_ids", "attention_mask", "labels", "position_ids", "token_type_ids"}
+        cleaned_features: list[dict[str, Any]] = []
         for feature in features:
+            feature = dict(feature)
             raw_images = feature.pop("images", None)
             feature.pop("packing_params", None)  # simplified: train_llava779k_qwen3vl2b.sh uses packing=false
+            cleaned_features.append({key: value for key, value in feature.items() if key in text_feature_keys})
             if raw_images is None:
                 images_per_sample.append([])
             elif isinstance(raw_images, list):
@@ -112,6 +116,7 @@ class MultiModalDataCollatorForSeq2Seq(DataCollatorForSeq2Seq):
             else:
                 images_per_sample.append([raw_images])
 
+        features = cleaned_features
         has_dummy_image = self._inject_dummy_image(features, images_per_sample)
         batch_images = [image for images in images_per_sample for image in images]
         batch_imglens = [len(images) for images in images_per_sample]
