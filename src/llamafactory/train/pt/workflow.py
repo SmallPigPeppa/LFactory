@@ -1,5 +1,3 @@
-import math
-
 from transformers import DataCollatorForLanguageModeling
 
 from ...data import LlamaFactoryDataModule, get_dataset, get_template_and_fix_tokenizer
@@ -11,7 +9,6 @@ from ..lightning_utils import (
     log_metrics,
     save_metrics,
     train_with_metrics,
-    validate_with_metrics,
 )
 
 
@@ -36,27 +33,11 @@ def run_pt(model_args, data_args, training_args, finetuning_args, callbacks=None
         finetuning_args,
         data_module,
         callbacks=callbacks,
-        enable_validation_during_fit=training_args.do_eval,
     )
 
     if training_args.do_train:
         metrics = train_with_metrics(trainer, lightning_module, data_module, training_args)
-        if "eval_loss" in metrics:
-            try:
-                metrics["perplexity"] = math.exp(metrics["eval_loss"])
-            except OverflowError:
-                metrics["perplexity"] = float("inf")
         log_metrics("train", metrics)
         save_metrics(training_args, "train", metrics)
-
-    if training_args.do_eval:
-        metrics = validate_with_metrics(trainer, lightning_module, data_module)
-        try:
-            metrics["perplexity"] = math.exp(metrics["eval_loss"])
-        except (OverflowError, KeyError):
-            if "eval_loss" in metrics:
-                metrics["perplexity"] = float("inf")
-        log_metrics("eval", metrics)
-        save_metrics(training_args, "eval", metrics)
 
     create_modelcard_and_push(lightning_module, model_args, data_args, training_args, finetuning_args)

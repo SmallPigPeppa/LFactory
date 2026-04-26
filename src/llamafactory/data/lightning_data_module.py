@@ -18,19 +18,17 @@ class LlamaFactoryDataModule(pl.LightningDataModule):
     def __init__(self, dataset_module, data_collator, training_args, finetuning_args):
         super().__init__()
         self.train_dataset = dataset_module.get("train_dataset")
-        self.eval_dataset = dataset_module.get("eval_dataset")
-        self.predict_dataset = dataset_module.get("predict_dataset") or self.eval_dataset
+        self.predict_dataset = dataset_module.get("predict_dataset")
         self.data_collator = data_collator
         self.training_args = training_args
         self.finetuning_args = finetuning_args
-        self.eval_dataset_names = self._dataset_names(self.eval_dataset)
         self.predict_dataset_names = self._dataset_names(self.predict_dataset)
 
     @staticmethod
     def _dataset_names(dataset):
         if isinstance(dataset, Mapping):
             return list(dataset.keys())
-        return ["validation"] if dataset is not None else []
+        return ["predict"] if dataset is not None else []
 
     @staticmethod
     def _datasets_to_loaders(dataset, factory):
@@ -74,9 +72,6 @@ class LlamaFactoryDataModule(pl.LightningDataModule):
             shuffle=not self.finetuning_args.disable_shuffling,
             is_train=True,
         )
-
-    def val_dataloader(self):
-        return self._datasets_to_loaders(self.eval_dataset, self._make_loader)
 
     def predict_dataloader(self):
         return self._datasets_to_loaders(self.predict_dataset, self._make_loader)

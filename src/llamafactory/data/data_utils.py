@@ -24,22 +24,16 @@ def merge_dataset(all_datasets, data_args, seed):
 
 
 def split_dataset(dataset, eval_dataset, data_args, seed):
-    train_dict, eval_dict = {}, {}
+    train_dict, predict_dict = {}, {}
     if dataset is not None:
-        if data_args.val_size > 1e-6:
-            val_size = int(data_args.val_size) if data_args.val_size > 1 else data_args.val_size
-            split = dataset.train_test_split(test_size=val_size, seed=seed)
-            train_dict["train"] = split["train"]
-            eval_dict["validation"] = split["test"]
-        else:
-            train_dict["train"] = dataset
+        train_dict["train"] = dataset
     if eval_dataset is not None:
         if isinstance(eval_dataset, dict):
             for name, data in eval_dataset.items():
-                eval_dict[f"validation_{name}"] = data
+                predict_dict[f"predict_{name}"] = data
         else:
-            eval_dict["validation"] = eval_dataset
-    return train_dict, eval_dict
+            predict_dict["predict"] = eval_dataset
+    return train_dict, predict_dict
 
 
 def get_dataset_module(dataset):
@@ -47,12 +41,18 @@ def get_dataset_module(dataset):
     if isinstance(dataset, DatasetDict):
         if "train" in dataset:
             module["train_dataset"] = dataset["train"]
-        if "validation" in dataset:
-            module["eval_dataset"] = dataset["validation"]
+        if "predict" in dataset:
+            module["predict_dataset"] = dataset["predict"]
         else:
-            eval_dataset = {k[len("validation_") :]: v for k, v in dataset.items() if k.startswith("validation_")}
-            if eval_dataset:
-                module["eval_dataset"] = eval_dataset
+            predict_dataset = {k[len("predict_") :]: v for k, v in dataset.items() if k.startswith("predict_")}
+            if predict_dataset:
+                module["predict_dataset"] = predict_dataset
+            elif "validation" in dataset:
+                module["predict_dataset"] = dataset["validation"]
+            else:
+                legacy_predict_dataset = {k[len("validation_") :]: v for k, v in dataset.items() if k.startswith("validation_")}
+                if legacy_predict_dataset:
+                    module["predict_dataset"] = legacy_predict_dataset
     else:
         module["train_dataset"] = dataset
     return module

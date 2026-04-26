@@ -58,7 +58,6 @@ class LlamaFactoryLightningModule(pl.LightningModule):
         processor=None,
         stage="sft",
         gen_kwargs=None,
-        compute_accuracy=False,
     ):
         super().__init__()
         self.model = model
@@ -68,10 +67,8 @@ class LlamaFactoryLightningModule(pl.LightningModule):
         self.processor = processor
         self.stage = stage
         self.gen_kwargs = gen_kwargs or {}
-        self.compute_accuracy = compute_accuracy
-        self._validation_accuracy = []
         # Keep Lightning checkpoint hyperparameters compact and serializable.
-        self.save_hyperparameters({"stage": stage, "compute_accuracy": compute_accuracy})
+        self.save_hyperparameters({"stage": stage})
 
     def forward(self, **batch):
         return self.model(**batch)
@@ -109,35 +106,6 @@ class LlamaFactoryLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss, _ = self._shared_loss_step(batch, "train_loss")
         return loss
-
-    def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        labels = batch.get("labels")
-        loss, outputs = self._shared_loss_step(batch, "eval_loss")
-        if self.compute_accuracy and labels is not None and not self.training_args.predict_with_generate:
-            logits = outputs.logits if hasattr(outputs, "logits") else outputs[1]
-            if isinstance(logits, (tuple, list)):
-                logits = logits[0] if logits[0].dim() == 3 else logits[1]
-            preds = torch.argmax(logits.detach(), dim=-1)
-            pred = preds[:, :-1]
-            label = labels[:, 1:]
-            mask = label != IGNORE_INDEX
-            if mask.any():
-                accuracy = (pred[mask] == label[mask]).float().mean()
-                self._validation_accuracy.append(accuracy.detach())
-                self.log(
-                    "eval_accuracy",
-                    accuracy,
-                    on_step=False,
-                    on_epoch=True,
-                    prog_bar=True,
-                    logger=True,
-                    sync_dist=True,
-                    batch_size=self._batch_size(batch),
-                )
-        return {"loss": loss.detach()}
-
-    def on_validation_epoch_end(self):
-        self._validation_accuracy.clear()
 
     def _generation_inputs(self, batch):
         ignored = {"labels"}

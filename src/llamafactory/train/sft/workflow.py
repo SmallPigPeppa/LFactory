@@ -11,7 +11,6 @@ from ..lightning_utils import (
     predict_with_outputs,
     save_metrics,
     train_with_metrics,
-    validate_with_metrics,
 )
 
 logger = get_logger(__name__)
@@ -49,14 +48,12 @@ def run_sft(model_args, data_args, training_args, finetuning_args, generating_ar
         processor=tokenizer_module.get("processor"),
         stage="sft",
         gen_kwargs=gen_kwargs,
-        compute_accuracy=finetuning_args.compute_accuracy,
     )
     trainer = build_lightning_trainer(
         training_args,
         finetuning_args,
         data_module,
         callbacks=callbacks,
-        enable_validation_during_fit=training_args.do_eval,
     )
 
     if training_args.do_train:
@@ -66,14 +63,9 @@ def run_sft(model_args, data_args, training_args, finetuning_args, generating_ar
         log_metrics("train", metrics)
         save_metrics(training_args, "train", metrics)
 
-    if training_args.do_eval:
-        metrics = validate_with_metrics(trainer, lightning_module, data_module)
-        log_metrics("eval", metrics)
-        save_metrics(training_args, "eval", metrics)
-
     if training_args.do_predict:
         predictions = predict_with_outputs(trainer, lightning_module, data_module)
-        predict_dataset = dataset_module.get("eval_dataset")
+        predict_dataset = dataset_module.get("predict_dataset")
         if isinstance(predict_dataset, dict):
             predict_dataset = next(iter(predict_dataset.values()))
         lightning_module.save_predictions(predict_dataset, predictions, generating_args.skip_special_tokens)

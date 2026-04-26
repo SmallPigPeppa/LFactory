@@ -3,8 +3,6 @@ import torch.distributed as dist
 from ..extras import logging
 from ..hparams import get_train_args, read_args
 from .callbacks import LogCallback, ReporterCallback
-from .lightning_compat import EarlyStopping
-from .lightning_utils import should_validate_during_fit
 from .pt import run_pt
 from .sft import run_sft
 
@@ -16,15 +14,8 @@ def _training_function(config):
     callbacks = config.get("callbacks") or []
     model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
     callbacks.append(LogCallback(training_args))
-    if finetuning_args.early_stopping_steps is not None and should_validate_during_fit(training_args):
-        callbacks.append(
-            EarlyStopping(
-                monitor="eval_loss",
-                patience=finetuning_args.early_stopping_steps,
-                mode="min",
-                check_finite=True,
-            )
-        )
+    if finetuning_args.early_stopping_steps is not None:
+        logger.warning_rank0("Ignoring early_stopping_steps because validation has been removed from the Lightning workflow.")
     callbacks.append(ReporterCallback(model_args, data_args, finetuning_args, generating_args))
 
     if finetuning_args.stage == "pt":

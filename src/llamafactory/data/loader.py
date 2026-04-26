@@ -108,7 +108,7 @@ def get_dataset(template, model_args, data_args, training_args, stage, tokenizer
 
     with training_args.main_process_first(desc="load parquet dataset", local=(not data_args.data_shared_file_system)):
         train_dataset = _get_merged_dataset(data_args.dataset, model_args, data_args, training_args)
-        eval_dataset = _get_merged_dataset(
+        predict_dataset = _get_merged_dataset(
             data_args.eval_dataset,
             model_args,
             data_args,
@@ -117,12 +117,12 @@ def get_dataset(template, model_args, data_args, training_args, stage, tokenizer
         )
 
     with training_args.main_process_first(desc="preprocess dataset", local=(not data_args.data_shared_file_system)):
-        train_dict, eval_dict = split_dataset(train_dataset, eval_dataset, data_args, seed=training_args.seed)
+        train_dict, predict_dict = split_dataset(train_dataset, predict_dataset, data_args, seed=training_args.seed)
         if "train" in train_dict:
             train_dict["train"] = _preprocess_dataset(train_dict["train"], data_args, training_args, stage, template, tokenizer, processor)
-        for key in eval_dict:
-            eval_dict[key] = _preprocess_dataset(eval_dict[key], data_args, training_args, stage, template, tokenizer, processor, is_eval=True)
-        dataset_dict = DatasetDict({**train_dict, **eval_dict})
+        for key in predict_dict:
+            predict_dict[key] = _preprocess_dataset(predict_dict[key], data_args, training_args, stage, template, tokenizer, processor, is_eval=True)
+        dataset_dict = DatasetDict({**train_dict, **predict_dict})
         if data_args.tokenized_path is not None and training_args.should_save:
             dataset_dict.save_to_disk(data_args.tokenized_path)
             logger.info_rank0(f"Tokenized dataset saved at {data_args.tokenized_path}.")

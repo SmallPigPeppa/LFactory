@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 
 import torch
-from transformers.trainer_utils import IntervalStrategy
 
 from ..extras import logging
 from .callbacks import SavePretrainedCallback
@@ -66,21 +65,7 @@ def get_resume_ckpt_path(training_args):
     return None
 
 
-def _interval_strategy(value):
-    try:
-        return IntervalStrategy(value)
-    except Exception:
-        return value
-
-
-def should_validate_during_fit(training_args):
-    if not getattr(training_args, "do_eval", False):
-        return False
-    eval_strategy = _interval_strategy(getattr(training_args, "eval_strategy", getattr(training_args, "evaluation_strategy", "no")))
-    return eval_strategy in {IntervalStrategy.STEPS, IntervalStrategy.EPOCH}
-
-
-def build_lightning_trainer(training_args, finetuning_args, data_module, callbacks=None, enable_validation_during_fit=False):
+def build_lightning_trainer(training_args, finetuning_args, data_module, callbacks=None):
     callbacks = list(callbacks or [])
     if getattr(training_args, "do_train", False):
         callbacks.append(SavePretrainedCallback(training_args))
@@ -91,7 +76,6 @@ def build_lightning_trainer(training_args, finetuning_args, data_module, callbac
     strategy = "ddp" if world_size > 1 else "auto"
     max_steps = data_module.max_train_steps() if getattr(training_args, "do_train", False) else -1
 
-    eval_strategy = _interval_strategy(getattr(training_args, "eval_strategy", getattr(training_args, "evaluation_strategy", "no")))
     trainer_kwargs = dict(
         accelerator=accelerator,
         devices="auto",
@@ -108,15 +92,7 @@ def build_lightning_trainer(training_args, finetuning_args, data_module, callbac
         enable_progress_bar=True,
         deterministic=False,
         default_root_dir=training_args.output_dir,
-        num_sanity_val_steps=0,
     )
-
-    if enable_validation_during_fit and data_module.eval_dataset is not None:
-        if eval_strategy == IntervalStrategy.STEPS:
-            trainer_kwargs["val_check_interval"] = max(1, int(getattr(training_args, "eval_steps", None) or getattr(training_args, "logging_steps", 1) or 1))
-            trainer_kwargs["check_val_every_n_epoch"] = None
-        elif eval_strategy == IntervalStrategy.EPOCH:
-            trainer_kwargs["check_val_every_n_epoch"] = 1
 
     return pl.Trainer(**trainer_kwargs)
 
@@ -169,16 +145,7 @@ def save_metrics(training_args, split, metrics):
 
 def train_with_metrics(trainer, lightning_module, data_module, training_args):
     started_at = time.time()
-    original_eval_dataset = data_module.eval_dataset
-    original_eval_names = data_module.eval_dataset_names
-    if not should_validate_during_fit(training_args):
-        data_module.eval_dataset = None
-        data_module.eval_dataset_names = []
-    try:
-        trainer.fit(lightning_module, datamodule=data_module, ckpt_path=get_resume_ckpt_path(training_args))
-    finally:
-        data_module.eval_dataset = original_eval_dataset
-        data_module.eval_dataset_names = original_eval_names
+    trainer.fit(lightning_module, datamodule=data_module, ckpt_path=get_resume_ckpt_path(training_args))
     runtime = max(time.time() - started_at, 1e-8)
     metrics = _normalise_metrics(trainer.callback_metrics)
     metrics.update(
@@ -191,11 +158,6 @@ def train_with_metrics(trainer, lightning_module, data_module, training_args):
         samples = len(train_dataset)
         metrics["train_samples_per_second"] = round(samples / runtime, 4)
     return metrics
-
-
-def validate_with_metrics(trainer, lightning_module, data_module):
-    results = trainer.validate(lightning_module, datamodule=data_module, verbose=False)
-    return _normalise_metrics(results)
 
 
 def predict_with_outputs(trainer, lightning_module, data_module):
