@@ -1,15 +1,7 @@
-# Copyright 2025 the LlamaFactory team.
-# Licensed under the Apache License, Version 2.0.
-
-
 def main():
-    from . import launcher
-
-    launcher.launch()
+    from .launcher import launch
+    launch()
 
 
 if __name__ == "__main__":
-    from multiprocessing import freeze_support
-
-    freeze_support()
     main()

@@ -1,60 +1,24 @@
-# Copyright 2025 the LlamaFactory team.
-# Licensed under the Apache License, Version 2.0.
-
 import math
 import os
 from copy import deepcopy
 from dataclasses import dataclass
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, Optional, TypedDict, Union
 
 import numpy as np
 import torch
+from PIL import Image
+from PIL.Image import Image as ImageObject
 from transformers.image_utils import get_image_size, make_flat_list_of_images, to_numpy_array
-from typing_extensions import override
 
 from ..extras.constants import IMAGE_PLACEHOLDER
-from ..extras.packages import is_pillow_available
 
 
-if is_pillow_available():
-    from PIL import Image
-    from PIL.Image import Image as ImageObject
-else:  # pragma: no cover - image training requires Pillow
-    Image = None
-    ImageObject = object
-
-
-if TYPE_CHECKING:
-    from transformers import PreTrainedTokenizer, ProcessorMixin
-    from transformers.image_processing_utils import BaseImageProcessor
-
-    class EncodedImage(TypedDict):
-        path: str | None
-        bytes: bytes | None
-
-    ImageInput = Union[str, bytes, EncodedImage, BinaryIO, ImageObject]
-
-    class RegularizedImageOutput(TypedDict):
-        images: list[ImageObject]
-
-    class MMProcessor(ProcessorMixin):
-        patch_size: int
-        image_seq_length: int
-        num_additional_image_tokens: int
-        vision_feature_select_strategy: str
-
-        def _get_number_of_features(self, orig_height: int, orig_width: int, height: int, width: int) -> int:
-            pass
-
-
-def _make_batched_images(images: list["ImageObject"], imglens: list[int]) -> list[list["ImageObject"]]:
-    batch_images = []
-    offset = 0
+def _make_batched_images(images, imglens):
+    batches, offset = [], 0
     for imglen in imglens:
-        batch_images.append(images[offset : offset + imglen])
+        batches.append(images[offset : offset + imglen])
         offset += imglen
-    return batch_images
+    return batches
 
 
 @dataclass
@@ -64,41 +28,22 @@ class BasePlugin:
     vision_bos_token: str = ""
     vision_eos_token: str = ""
 
-    def _validate_input(self, processor: Optional["MMProcessor"], images: list["ImageInput"]) -> None:
-        if len(images) != 0 and self.image_token is None:
-            raise ValueError("This template/model does not support image input.")
-        if self.image_token is not None and processor is None:
-            raise ValueError("Processor was not found. Please check the model processor files.")
-        if self.image_token is not None and getattr(processor, "image_processor", None) is None:
-            raise ValueError("Image processor was not found. Please check the model processor files.")
+    def _validate_input(self, processor, images):
+        if images and self.image_token is None:
+            raise ValueError("This template does not support image input.")
+        if self.image_token is not None and images and processor is None:
+            raise ValueError("Processor is required for image training.")
+        if self.image_token is not None and images and getattr(processor, "image_processor", None) is None:
+            raise ValueError("Image processor is required for image training.")
 
-    def _validate_messages(self, messages: list[dict[str, str]], images: list["ImageInput"]) -> None:
-        num_image_tokens = sum(message["content"].count(IMAGE_PLACEHOLDER) for message in messages)
-        if len(images) != num_image_tokens:
-            raise ValueError(
-                f"The number of images ({len(images)}) does not match the number of "
-                f"{IMAGE_PLACEHOLDER} placeholders ({num_image_tokens}) in {messages}."
-            )
+    def _validate_messages(self, messages, images):
+        placeholders = sum(m["content"].count(IMAGE_PLACEHOLDER) for m in messages)
+        if len(images) != placeholders:
+            raise ValueError(f"images={len(images)} but {IMAGE_PLACEHOLDER} placeholders={placeholders}: {messages}")
 
-    def _preprocess_image(
-        self, image: "ImageObject", image_max_pixels: int, image_min_pixels: int, **kwargs
-    ) -> "ImageObject":
-        if (image.width * image.height) > image_max_pixels:
-            resize_factor = math.sqrt(image_max_pixels / (image.width * image.height))
-            image = image.resize((max(1, int(image.width * resize_factor)), max(1, int(image.height * resize_factor))))
-
-        if (image.width * image.height) < image_min_pixels:
-            resize_factor = math.sqrt(image_min_pixels / (image.width * image.height))
-            image = image.resize((max(1, int(image.width * resize_factor)), max(1, int(image.height * resize_factor))))
-
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        return image
-
-    def _open_image(self, image: "ImageInput") -> "ImageObject":
-        if Image is None:
-            raise RuntimeError("Pillow is required for image training.")
-
+    def _open_image(self, image):
+        if isinstance(image, ImageObject):
+            return image
         if isinstance(image, str):
             with Image.open(os.path.expanduser(image)) as img:
                 return img.copy()
@@ -106,107 +51,76 @@ class BasePlugin:
             with Image.open(BytesIO(image)) as img:
                 return img.copy()
         if isinstance(image, dict):
-            image_bytes = image.get("bytes")
-            image_path = image.get("path")
-            if image_bytes is not None:
-                with Image.open(BytesIO(image_bytes)) as img:
+            if image.get("bytes") is not None:
+                with Image.open(BytesIO(image["bytes"])) as img:
                     return img.copy()
-            if image_path is not None:
-                with Image.open(os.path.expanduser(image_path)) as img:
+            if image.get("path") is not None:
+                with Image.open(os.path.expanduser(image["path"])) as img:
                     return img.copy()
-            raise ValueError(f"Invalid image dictionary: {image.keys()}.")
         if hasattr(image, "read"):
             with Image.open(image) as img:
                 return img.copy()
-        if isinstance(image, ImageObject):
-            return image
         raise TypeError(f"Unsupported image input type: {type(image)}")
 
-    def _regularize_images(self, images: list["ImageInput"], **kwargs) -> "RegularizedImageOutput":
-        results = []
-        for image in images:
-            results.append(self._preprocess_image(self._open_image(image), **kwargs))
-        return {"images": results}
+    def _preprocess_image(self, image, image_max_pixels, image_min_pixels, **kwargs):
+        pixels = image.width * image.height
+        if pixels > image_max_pixels:
+            scale = math.sqrt(image_max_pixels / pixels)
+            image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))))
+        pixels = image.width * image.height
+        if pixels < image_min_pixels:
+            scale = math.sqrt(image_min_pixels / pixels)
+            image = image.resize((max(1, int(image.width * scale)), max(1, int(image.height * scale))))
+        return image.convert("RGB") if image.mode != "RGB" else image
 
-    def _get_mm_inputs(
-        self,
-        images: list["ImageInput"],
-        processor: "MMProcessor",
-        imglens: list[int] | None = None,
-    ) -> dict[str, "torch.Tensor"]:
-        mm_inputs: dict[str, Any] = {}
-        if len(images) == 0:
-            return mm_inputs
+    def _regularize_images(self, images, processor):
+        return [
+            self._preprocess_image(
+                self._open_image(image),
+                image_max_pixels=getattr(processor, "image_max_pixels", 768 * 768),
+                image_min_pixels=getattr(processor, "image_min_pixels", 32 * 32),
+            )
+            for image in images
+        ]
 
-        image_processor = getattr(processor, "image_processor")
-        images = self._regularize_images(
-            images,
-            image_max_pixels=getattr(processor, "image_max_pixels", 768 * 768),
-            image_min_pixels=getattr(processor, "image_min_pixels", 32 * 32),
-        )["images"]
-
+    def _get_mm_inputs(self, images, processor, imglens=None):
+        if not images:
+            return {}
+        images = self._regularize_images(images, processor)
         if imglens is not None:
             images = _make_batched_images(images, imglens)
-
-        image_processor_kwargs = {}
+        kwargs = {}
         if getattr(processor, "image_do_pan_and_scan", False):
-            image_processor_kwargs.update(
-                {
-                    "do_pan_and_scan": True,
-                    "pan_and_scan_min_crop_size": 256,
-                    "pan_and_scan_max_num_crops": 4,
-                    "pan_and_scan_min_ratio_to_activate": 1.2,
-                }
+            kwargs.update(
+                do_pan_and_scan=True,
+                pan_and_scan_min_crop_size=256,
+                pan_and_scan_max_num_crops=4,
+                pan_and_scan_min_ratio_to_activate=1.2,
             )
+        return processor.image_processor(images, return_tensors="pt", **kwargs)
 
-        mm_inputs.update(image_processor(images, return_tensors="pt", **image_processor_kwargs))
-        return mm_inputs
-
-    def process_messages(
-        self,
-        messages: list[dict[str, str]],
-        images: list["ImageInput"],
-        processor: Optional["MMProcessor"],
-    ) -> list[dict[str, str]]:
+    def process_messages(self, messages, images, processor):
         self._validate_input(processor, images)
         return messages
 
-    def process_token_ids(
-        self,
-        input_ids: list[int],
-        labels: list[int] | None,
-        images: list["ImageInput"],
-        tokenizer: "PreTrainedTokenizer",
-        processor: Optional["MMProcessor"],
-    ) -> tuple[list[int], list[int] | None]:
+    def process_token_ids(self, input_ids, labels, images, tokenizer, processor):
         self._validate_input(processor, images)
         return input_ids, labels
 
-    def get_mm_inputs(
-        self,
-        images: list["ImageInput"],
-        imglens: list[int],
-        batch_ids: list[list[int]],
-        processor: Optional["MMProcessor"],
-    ) -> dict[str, Any]:
+    def get_mm_inputs(self, images, imglens, batch_ids, processor):
         self._validate_input(processor, images)
-        if processor is None:
+        if processor is None or not images:
             return {}
         return self._get_mm_inputs(images, processor)
 
 
 @dataclass
 class LlavaPlugin(BasePlugin):
-    @override
-    def process_messages(
-        self,
-        messages: list[dict[str, str]],
-        images: list["ImageInput"],
-        processor: Optional["MMProcessor"],
-    ) -> list[dict[str, str]]:
+    def process_messages(self, messages, images, processor):
         self._validate_input(processor, images)
         self._validate_messages(messages, images)
         messages = deepcopy(messages)
+        image_seqlen = 1
         if self.expand_mm_tokens and images:
             mm_inputs = self._get_mm_inputs(images, processor)
             if "pixel_values" in mm_inputs:
@@ -215,28 +129,17 @@ class LlavaPlugin(BasePlugin):
                 image_seqlen += getattr(processor, "num_additional_image_tokens", 0)
                 if getattr(processor, "vision_feature_select_strategy", None) == "default":
                     image_seqlen -= 1
-            else:
-                image_seqlen = 1
-        else:
-            image_seqlen = 1
-
         for message in messages:
             content = message["content"]
             while IMAGE_PLACEHOLDER in content:
-                content = content.replace(IMAGE_PLACEHOLDER, "{{image}}" * image_seqlen, 1)
-            message["content"] = content.replace("{{image}}", self.image_token or "")
+                content = content.replace(IMAGE_PLACEHOLDER, (self.image_token or "") * image_seqlen, 1)
+            message["content"] = content
         return messages
 
 
 @dataclass
 class LlavaNextPlugin(BasePlugin):
-    @override
-    def process_messages(
-        self,
-        messages: list[dict[str, str]],
-        images: list["ImageInput"],
-        processor: Optional["MMProcessor"],
-    ) -> list[dict[str, str]]:
+    def process_messages(self, messages, images, processor):
         self._validate_input(processor, images)
         self._validate_messages(messages, images)
         messages = deepcopy(messages)
@@ -247,62 +150,47 @@ class LlavaNextPlugin(BasePlugin):
             if "pixel_values" in mm_inputs and "image_sizes" in mm_inputs:
                 image_sizes = iter(mm_inputs["image_sizes"].tolist())
                 height, width = get_image_size(to_numpy_array(mm_inputs["pixel_values"][0][0]))
-
         for message in messages:
             content = message["content"]
             while IMAGE_PLACEHOLDER in content:
-                if self.expand_mm_tokens and image_sizes is not None:
+                image_seqlen = 1
+                if image_sizes is not None:
                     orig_height, orig_width = next(image_sizes)
                     image_seqlen = processor._get_number_of_features(orig_height, orig_width, height, width)
                     if getattr(processor, "vision_feature_select_strategy", None) == "default":
                         image_seqlen -= 1
-                else:
-                    image_seqlen = 1
-                content = content.replace(IMAGE_PLACEHOLDER, "{{image}}" * image_seqlen, 1)
-            message["content"] = content.replace("{{image}}", self.image_token or "")
+                content = content.replace(IMAGE_PLACEHOLDER, (self.image_token or "") * image_seqlen, 1)
+            message["content"] = content
         return messages
 
 
 @dataclass
 class InternVLPlugin(BasePlugin):
-    @override
-    def _get_mm_inputs(
-        self,
-        images: list["ImageInput"],
-        processor: "MMProcessor",
-        imglens: list[int] | None = None,
-    ) -> dict[str, "torch.Tensor"]:
-        if len(images) == 0:
+    def _get_mm_inputs(self, images, processor, imglens=None):
+        if not images:
             return {}
-        image_processor = getattr(processor, "image_processor")
-        image_processor_kwargs = {}
+        kwargs = {}
         if getattr(processor, "crop_to_patches", False):
-            image_processor_kwargs.update({"crop_to_patches": True, "max_patches": 12, "min_patches": 1})
-
-        images = self._regularize_images(
-            images,
-            image_max_pixels=getattr(processor, "image_max_pixels", 1024 * 1024),
-            image_min_pixels=getattr(processor, "image_min_pixels", 32 * 32),
-        )["images"]
-        images = make_flat_list_of_images(images)
-        image_inputs = image_processor(images=images, return_tensors="pt", **image_processor_kwargs)
-        image_num_patches = image_inputs.pop("num_patches")
-        image_pixel_values = image_inputs.pop("pixel_values")
-        image_num_patches_indices = np.cumsum(image_num_patches)
-        image_patches = []
+            kwargs.update(crop_to_patches=True, max_patches=12, min_patches=1)
+        images = [
+            self._preprocess_image(
+                self._open_image(image),
+                image_max_pixels=getattr(processor, "image_max_pixels", 1024 * 1024),
+                image_min_pixels=getattr(processor, "image_min_pixels", 32 * 32),
+            )
+            for image in images
+        ]
+        image_inputs = processor.image_processor(images=make_flat_list_of_images(images), return_tensors="pt", **kwargs)
+        num_patches = image_inputs.pop("num_patches")
+        pixel_values = image_inputs.pop("pixel_values")
+        patch_ends = np.cumsum(num_patches)
+        patches = []
         for i in range(len(images)):
-            start_index = image_num_patches_indices[i - 1] if i > 0 else 0
-            end_index = image_num_patches_indices[i]
-            image_patches.append(image_pixel_values[start_index:end_index])
-        return {"pixel_values": torch.cat(image_patches, dim=0), "image_num_patches": image_num_patches}
+            start = patch_ends[i - 1] if i > 0 else 0
+            patches.append(pixel_values[start : patch_ends[i]])
+        return {"pixel_values": torch.cat(patches, dim=0), "image_num_patches": num_patches}
 
-    @override
-    def process_messages(
-        self,
-        messages: list[dict[str, str]],
-        images: list["ImageInput"],
-        processor: Optional["MMProcessor"],
-    ) -> list[dict[str, str]]:
+    def process_messages(self, messages, images, processor):
         self._validate_input(processor, images)
         self._validate_messages(messages, images)
         messages = deepcopy(messages)
@@ -313,22 +201,15 @@ class InternVLPlugin(BasePlugin):
         for message in messages:
             content = message["content"]
             while IMAGE_PLACEHOLDER in content:
-                num_patches = int(image_num_patches[image_idx]) if self.expand_mm_tokens and len(image_num_patches) else 1
-                content = content.replace(IMAGE_PLACEHOLDER, f"<img>{'<IMG_CONTEXT>' * image_seqlen * num_patches}</img>", 1)
+                patches = int(image_num_patches[image_idx]) if self.expand_mm_tokens and len(image_num_patches) else 1
+                content = content.replace(IMAGE_PLACEHOLDER, f"<img>{'<IMG_CONTEXT>' * image_seqlen * patches}</img>", 1)
                 image_idx += 1
             message["content"] = content
         return messages
 
-    @override
-    def get_mm_inputs(
-        self,
-        images: list["ImageInput"],
-        imglens: list[int],
-        batch_ids: list[list[int]],
-        processor: Optional["MMProcessor"],
-    ) -> dict[str, Any]:
+    def get_mm_inputs(self, images, imglens, batch_ids, processor):
         self._validate_input(processor, images)
-        if processor is None:
+        if processor is None or not images:
             return {}
         mm_inputs = self._get_mm_inputs(images, processor)
         mm_inputs.pop("image_num_patches", None)
@@ -340,8 +221,7 @@ class Qwen2VLPlugin(BasePlugin):
     vision_bos_token: str = "<|vision_start|>"
     vision_eos_token: str = "<|vision_end|>"
 
-    @override
-    def _preprocess_image(self, image: "ImageObject", **kwargs) -> "ImageObject":
+    def _preprocess_image(self, image, **kwargs):
         image = super()._preprocess_image(image, **kwargs)
         if min(image.width, image.height) < 28:
             image = image.resize((max(image.width, 28), max(image.height, 28)))
@@ -351,24 +231,16 @@ class Qwen2VLPlugin(BasePlugin):
             image = image.resize((image.width, image.width * 180))
         return image
 
-    @override
-    def process_messages(
-        self,
-        messages: list[dict[str, str]],
-        images: list["ImageInput"],
-        processor: Optional["MMProcessor"],
-    ) -> list[dict[str, str]]:
+    def process_messages(self, messages, images, processor):
         self._validate_input(processor, images)
         self._validate_messages(messages, images)
         messages = deepcopy(messages)
-        image_processor = getattr(processor, "image_processor")
-        merge_length = getattr(image_processor, "merge_size", 1) ** 2
-        image_idx = 0
+        merge_length = getattr(processor.image_processor, "merge_size", 1) ** 2
         if self.expand_mm_tokens and images:
             image_grid_thw = self._get_mm_inputs(images, processor).get("image_grid_thw", [])
         else:
             image_grid_thw = [None] * len(images)
-
+        image_idx = 0
         for message in messages:
             content = message["content"]
             while IMAGE_PLACEHOLDER in content:
@@ -383,7 +255,6 @@ class Qwen2VLPlugin(BasePlugin):
         return messages
 
 
-@dataclass
 class Qwen3VLPlugin(Qwen2VLPlugin):
     pass
 
@@ -398,9 +269,8 @@ PLUGINS = {
 }
 
 
-def get_mm_plugin(name: str, image_token: str | None = None, **kwargs) -> BasePlugin:
+def get_mm_plugin(name, image_token=None, **kwargs):
     if name not in PLUGINS:
-        raise ValueError(f"Multimodal plugin `{name}` not found in slim build.")
-    supported_kwargs = {"expand_mm_tokens", "vision_bos_token", "vision_eos_token"}
-    filtered_kwargs = {key: value for key, value in kwargs.items() if key in supported_kwargs}
-    return PLUGINS[name](image_token=image_token, **filtered_kwargs)
+        raise ValueError(f"Unknown multimodal plugin: {name}")
+    kept = {k: v for k, v in kwargs.items() if k in {"expand_mm_tokens", "vision_bos_token", "vision_eos_token"}}
+    return PLUGINS[name](image_token=image_token, **kept)

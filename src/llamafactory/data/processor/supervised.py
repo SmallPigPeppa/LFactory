@@ -3,15 +3,12 @@
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any
 
 from ...extras import logging
 from ...extras.constants import IGNORE_INDEX
 from .processor_utils import DatasetProcessor, greedy_knapsack, infer_seqlen
 
-
-if TYPE_CHECKING:
-    from ..mm_plugin import ImageInput
 
 
 logger = logging.get_logger(__name__)
@@ -31,9 +28,9 @@ class SupervisedDatasetProcessor(DatasetProcessor):
         self,
         prompt: list[dict[str, str]],
         response: list[dict[str, str]],
-        system: Optional[str],
-        tools: Optional[str],
-        images: list["ImageInput"],
+        system: str | None,
+        tools: str | None,
+        images: list,
     ) -> tuple[list[int], list[int]]:
         messages = self.template.mm_plugin.process_messages(prompt + response, images, self.processor)
         input_ids, labels = self.template.mm_plugin.process_token_ids([], [], images, self.tokenizer, self.processor)

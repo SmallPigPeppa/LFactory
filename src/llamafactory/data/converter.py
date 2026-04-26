@@ -1,31 +1,19 @@
-# Copyright 2025 the LlamaFactory team.
-# Licensed under the Apache License, Version 2.0.
-
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..extras import logging
 from .data_utils import Role
-
-
-if TYPE_CHECKING:
-    from datasets import Dataset, IterableDataset
-    from transformers import Seq2SeqTrainingArguments
-
-    from ..hparams import DataArguments
-    from .parser import DatasetAttr
-
 
 logger = logging.get_logger(__name__)
 
 
 @dataclass
 class ShareGPT779KConverter:
-    dataset_attr: "DatasetAttr"
-    data_args: "DataArguments"
+    dataset_attr: Any
+    data_args: Any
 
-    def _find_images(self, images: Any) -> list[Any] | None:
+    def _find_images(self, images):
         if images is None:
             return None
         if isinstance(images, (str, bytes, dict)) or hasattr(images, "read"):
@@ -36,85 +24,58 @@ class ShareGPT779KConverter:
             return None
         else:
             images = images[:]
-
         for i, image in enumerate(images):
             if isinstance(image, str):
-                image_path = os.path.join(self.data_args.media_dir, image)
-                if os.path.isfile(image_path):
-                    images[i] = image_path
+                path = os.path.join(self.data_args.media_dir, image)
+                if os.path.isfile(path):
+                    images[i] = path
         return images
 
-    def __call__(self, example: dict[str, Any]) -> dict[str, Any]:
-        messages = example[self.dataset_attr.messages]
+    def __call__(self, example):
+        attr = self.dataset_attr
+        messages = example[attr.messages]
         tag_mapping = {
-            self.dataset_attr.user_tag: Role.USER.value,
-            self.dataset_attr.assistant_tag: Role.ASSISTANT.value,
-            self.dataset_attr.observation_tag: Role.OBSERVATION.value,
-            self.dataset_attr.function_tag: Role.FUNCTION.value,
-            self.dataset_attr.system_tag: Role.SYSTEM.value,
+            attr.user_tag: Role.USER.value,
+            attr.assistant_tag: Role.ASSISTANT.value,
+            attr.observation_tag: Role.OBSERVATION.value,
+            attr.function_tag: Role.FUNCTION.value,
+            attr.system_tag: Role.SYSTEM.value,
         }
-        odd_tags = (self.dataset_attr.user_tag, self.dataset_attr.observation_tag)
-        even_tags = (self.dataset_attr.assistant_tag, self.dataset_attr.function_tag)
-        accept_tags = (odd_tags, even_tags)
-
-        if (
-            self.dataset_attr.system_tag
-            and len(messages) != 0
-            and messages[0][self.dataset_attr.role_tag] == self.dataset_attr.system_tag
-        ):
-            system = messages[0][self.dataset_attr.content_tag]
+        if attr.system_tag and messages and messages[0][attr.role_tag] == attr.system_tag:
+            system = messages[0][attr.content_tag]
             messages = messages[1:]
         else:
-            system = example[self.dataset_attr.system] if self.dataset_attr.system else ""
+            system = example[attr.system] if attr.system else ""
 
-        aligned_messages = []
-        broken = False
+        aligned, broken = [], False
+        odd_tags = (attr.user_tag, attr.observation_tag)
+        even_tags = (attr.assistant_tag, attr.function_tag)
         for turn_idx, message in enumerate(messages):
-            if message[self.dataset_attr.role_tag] not in accept_tags[turn_idx % 2]:
+            valid_tags = odd_tags if turn_idx % 2 == 0 else even_tags
+            if message[attr.role_tag] not in valid_tags:
                 logger.warning_rank0(f"Invalid role tag in {messages}.")
                 broken = True
                 break
-            aligned_messages.append(
-                {
-                    "role": tag_mapping[message[self.dataset_attr.role_tag]],
-                    "content": message[self.dataset_attr.content_tag],
-                }
-            )
+            aligned.append({"role": tag_mapping[message[attr.role_tag]], "content": message[attr.content_tag]})
 
-        if len(aligned_messages) % 2 != 0:
-            logger.warning_rank0(f"Invalid message count in {messages}.")
+        if len(aligned) % 2 != 0:
             broken = True
-
-        if broken:
-            logger.warning_rank0("Skipping this abnormal example.")
-            prompt, response = [], []
-        else:
-            prompt = aligned_messages[:-1]
-            response = aligned_messages[-1:]
-
+        prompt, response = ([], []) if broken else (aligned[:-1], aligned[-1:])
         return {
             "_prompt": prompt,
             "_response": response,
             "_system": system,
-            "_tools": example[self.dataset_attr.tools] if self.dataset_attr.tools else "",
-            "_images": self._find_images(example[self.dataset_attr.images]) if self.dataset_attr.images else None,
+            "_tools": example[attr.tools] if attr.tools else "",
+            "_images": self._find_images(example[attr.images]) if attr.images else None,
         }
 
 
-def align_dataset(
-    dataset: "Dataset | IterableDataset",
-    dataset_attr: "DatasetAttr",
-    data_args: "DataArguments",
-    training_args: "Seq2SeqTrainingArguments",
-) -> "Dataset | IterableDataset":
-    converter = ShareGPT779KConverter(dataset_attr=dataset_attr, data_args=data_args)
+def align_dataset(dataset, dataset_attr, data_args, training_args):
+    converter = ShareGPT779KConverter(dataset_attr, data_args)
     column_names = list(next(iter(dataset)).keys())
-    kwargs = {}
-    if not data_args.streaming:
-        kwargs = dict(
-            num_proc=data_args.preprocessing_num_workers,
-            load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
-            desc="Converting 779k parquet rows to ShareGPT format",
-        )
-
+    kwargs = dict(
+        num_proc=data_args.preprocessing_num_workers,
+        load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
+        desc="Converting 779k parquet rows",
+    )
     return dataset.map(converter, remove_columns=column_names, **kwargs)

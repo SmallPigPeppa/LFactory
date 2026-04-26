@@ -1,8 +1,4 @@
-# Copyright 2025 the LlamaFactory team.
-# Licensed under the Apache License, Version 2.0.
-
 import os
-from typing import TYPE_CHECKING, Literal, Optional, Union
 
 import numpy as np
 from datasets import DatasetDict, load_dataset, load_from_disk
@@ -14,37 +10,21 @@ from .data_utils import get_dataset_module, merge_dataset, split_dataset
 from .parser import get_dataset_list
 from .processor import PackedSupervisedDatasetProcessor, PretrainDatasetProcessor, SupervisedDatasetProcessor
 
-
-if TYPE_CHECKING:
-    from datasets import Dataset, IterableDataset
-    from transformers import PreTrainedTokenizer, ProcessorMixin, Seq2SeqTrainingArguments
-
-    from ..hparams import DataArguments, ModelArguments
-    from .data_utils import DatasetModule
-    from .parser import DatasetAttr
-    from .processor import DatasetProcessor
-    from .template import Template
-
-
 logger = logging.get_logger(__name__)
+_TOKENIZED_COLUMNS = {"input_ids", "attention_mask", "labels", "position_ids", "token_type_ids", "images", "packing_params"}
 
 
-_TOKENIZED_TEXT_COLUMNS = {"input_ids", "attention_mask", "labels", "position_ids", "token_type_ids", "images", "packing_params"}
-
-
-def _sanitize_tokenized_dataset(dataset: Union["Dataset", "IterableDataset", DatasetDict]) -> Union["Dataset", "IterableDataset", DatasetDict]:
+def _sanitize_tokenized_dataset(dataset):
     if isinstance(dataset, DatasetDict):
         return DatasetDict({key: _sanitize_tokenized_dataset(value) for key, value in dataset.items()})
-
-    column_names = set(getattr(dataset, "column_names", []) or [])
-    extra_columns = sorted(column_names - _TOKENIZED_TEXT_COLUMNS)
+    extra_columns = sorted(set(getattr(dataset, "column_names", []) or []) - _TOKENIZED_COLUMNS)
     if extra_columns:
-        logger.warning_rank0(f"Dropping unused columns from tokenized dataset: {', '.join(extra_columns)}.")
+        logger.warning_rank0(f"Dropping unused tokenized columns: {', '.join(extra_columns)}")
         dataset = dataset.remove_columns(extra_columns)
     return dataset
 
 
-def _collect_parquet_files(path: str) -> list[str]:
+def _collect_parquet_files(path):
     if os.path.isdir(path):
         files = [os.path.join(path, name) for name in sorted(os.listdir(path)) if name.endswith(".parquet")]
     elif os.path.isfile(path) and path.endswith(".parquet"):
@@ -52,161 +32,98 @@ def _collect_parquet_files(path: str) -> list[str]:
     else:
         files = []
     if not files:
-        raise ValueError(f"Cannot find parquet files under: {path}")
+        raise ValueError(f"No parquet files found under: {path}")
     return files
 
 
-def _load_single_dataset(
-    dataset_attr: "DatasetAttr",
-    model_args: "ModelArguments",
-    data_args: "DataArguments",
-    training_args: "Seq2SeqTrainingArguments",
-) -> Union["Dataset", "IterableDataset"]:
-    logger.info_rank0(f"Loading 779k parquet dataset {dataset_attr}...")
-    local_path = os.path.join(data_args.dataset_dir, dataset_attr.dataset_name)
-    data_files = _collect_parquet_files(local_path)
+def _load_single_dataset(dataset_attr, model_args, data_args, training_args):
+    path = os.path.join(data_args.dataset_dir, dataset_attr.dataset_name)
     dataset = load_dataset(
-        path="parquet",
-        data_files=data_files,
+        "parquet",
+        data_files=_collect_parquet_files(path),
         split=dataset_attr.split,
         cache_dir=model_args.cache_dir,
         token=model_args.hf_hub_token,
         num_proc=data_args.preprocessing_num_workers,
-        streaming=data_args.streaming,
     )
-    if data_args.streaming:
-        dataset = dataset.to_iterable_dataset(num_shards=training_args.dataloader_num_workers)
-
-    if dataset_attr.num_samples is not None and not data_args.streaming:
-        target_num = dataset_attr.num_samples
-        indexes = np.random.permutation(len(dataset))[:target_num]
-        target_num -= len(indexes)
-        if target_num > 0:
-            indexes = np.concatenate((indexes, np.random.choice(len(dataset), target_num)), axis=0)
+    if dataset_attr.num_samples is not None:
+        target = dataset_attr.num_samples
+        indexes = np.random.permutation(len(dataset))[:target]
+        if target > len(indexes):
+            indexes = np.concatenate((indexes, np.random.choice(len(dataset), target - len(indexes))), axis=0)
         dataset = dataset.select(indexes)
-        logger.info_rank0(f"Sampled {dataset_attr.num_samples} examples from dataset {dataset_attr}.")
-
-    if data_args.max_samples is not None and not data_args.streaming:
+    if data_args.max_samples is not None:
         dataset = dataset.select(range(min(data_args.max_samples, len(dataset))))
-
     return align_dataset(dataset, dataset_attr, data_args, training_args)
 
 
-def _get_merged_dataset(
-    dataset_names: list[str] | None,
-    model_args: "ModelArguments",
-    data_args: "DataArguments",
-    training_args: "Seq2SeqTrainingArguments",
-    stage: Literal["pt", "sft"],
-    return_dict: bool = False,
-) -> Union["Dataset", "IterableDataset", dict[str, "Dataset"]] | None:
+def _get_merged_dataset(dataset_names, model_args, data_args, training_args, return_dict=False):
     if dataset_names is None:
         return None
     datasets = {}
-    for dataset_name, dataset_attr in zip(dataset_names, get_dataset_list(dataset_names, data_args.dataset_dir)):
-        datasets[dataset_name] = _load_single_dataset(dataset_attr, model_args, data_args, training_args)
+    for name, attr in zip(dataset_names, get_dataset_list(dataset_names, data_args.dataset_dir)):
+        datasets[name] = _load_single_dataset(attr, model_args, data_args, training_args)
     return datasets if return_dict else merge_dataset(list(datasets.values()), data_args, seed=training_args.seed)
 
 
-def _get_dataset_processor(
-    data_args: "DataArguments",
-    stage: Literal["pt", "sft"],
-    template: "Template",
-    tokenizer: "PreTrainedTokenizer",
-    processor: Optional["ProcessorMixin"],
-) -> "DatasetProcessor":
+def _get_dataset_processor(data_args, stage, template, tokenizer, processor):
     if stage == "pt":
-        processor_cls = PretrainDatasetProcessor
+        cls = PretrainDatasetProcessor
     elif stage == "sft":
-        processor_cls = PackedSupervisedDatasetProcessor if data_args.packing else SupervisedDatasetProcessor
+        cls = PackedSupervisedDatasetProcessor if data_args.packing else SupervisedDatasetProcessor
     else:
-        raise ValueError("Slim build only supports `pt` and `sft` stages.")
-    return processor_cls(template=template, tokenizer=tokenizer, processor=processor, data_args=data_args)
+        raise ValueError("Only pt and sft stages are kept.")
+    return cls(template=template, tokenizer=tokenizer, processor=processor, data_args=data_args)
 
 
-def _get_preprocessed_dataset(
-    dataset: Union["Dataset", "IterableDataset"] | None,
-    data_args: "DataArguments",
-    training_args: "Seq2SeqTrainingArguments",
-    stage: Literal["pt", "sft"],
-    template: "Template",
-    tokenizer: "PreTrainedTokenizer",
-    processor: Optional["ProcessorMixin"] = None,
-    is_eval: bool = False,
-) -> Union["Dataset", "IterableDataset"] | None:
+def _preprocess_dataset(dataset, data_args, training_args, stage, template, tokenizer, processor=None, is_eval=False):
     if dataset is None:
         return None
-
     dataset_processor = _get_dataset_processor(data_args, stage, template, tokenizer, processor)
     column_names = list(next(iter(dataset)).keys())
-    kwargs = {}
-    if not data_args.streaming:
-        kwargs = dict(
-            num_proc=data_args.preprocessing_num_workers,
-            load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
-            desc="Tokenizing 779k dataset",
-        )
-
     dataset = dataset.map(
         dataset_processor.preprocess_dataset,
         batched=True,
         batch_size=data_args.preprocessing_batch_size,
         remove_columns=column_names,
-        **kwargs,
+        num_proc=data_args.preprocessing_num_workers,
+        load_from_cache_file=(not data_args.overwrite_cache) or (training_args.local_process_index != 0),
+        desc="Tokenizing 779k dataset",
     )
     if training_args.should_log:
         try:
             print("eval example:" if is_eval else "training example:")
             dataset_processor.print_data_example(next(iter(dataset)))
-        except StopIteration:
-            raise RuntimeError("Cannot find valid samples in the parquet dataset.")
+        except StopIteration as exc:
+            raise RuntimeError("No valid examples found after preprocessing.") from exc
     return dataset
 
 
-def get_dataset(
-    template: "Template",
-    model_args: "ModelArguments",
-    data_args: "DataArguments",
-    training_args: "Seq2SeqTrainingArguments",
-    stage: Literal["pt", "sft"],
-    tokenizer: "PreTrainedTokenizer",
-    processor: Optional["ProcessorMixin"] = None,
-) -> "DatasetModule":
-    if data_args.tokenized_path is not None:
-        if has_tokenized_data(data_args.tokenized_path):
-            logger.warning_rank0("Loading tokenized dataset from disk will ignore other data arguments.")
-            tokenized_data = _sanitize_tokenized_dataset(load_from_disk(data_args.tokenized_path))
-            dataset_module = get_dataset_module(tokenized_data)
-            if data_args.streaming:
-                dataset_module["train_dataset"] = dataset_module["train_dataset"].to_iterable_dataset()
-            logger.info_rank0(f"Loaded tokenized dataset from {data_args.tokenized_path}.")
-            return dataset_module
-        if data_args.streaming:
-            raise ValueError("Turn off `streaming` when saving tokenized data to disk.")
+def get_dataset(template, model_args, data_args, training_args, stage, tokenizer, processor=None):
+    if has_tokenized_data(data_args.tokenized_path):
+        logger.warning_rank0("Loading tokenized dataset from disk; raw data args are ignored.")
+        tokenized_data = _sanitize_tokenized_dataset(load_from_disk(data_args.tokenized_path))
+        logger.info_rank0(f"Loaded tokenized dataset from {data_args.tokenized_path}.")
+        return get_dataset_module(tokenized_data)
 
     with training_args.main_process_first(desc="load parquet dataset", local=(not data_args.data_shared_file_system)):
-        dataset = _get_merged_dataset(data_args.dataset, model_args, data_args, training_args, stage)
+        train_dataset = _get_merged_dataset(data_args.dataset, model_args, data_args, training_args)
         eval_dataset = _get_merged_dataset(
             data_args.eval_dataset,
             model_args,
             data_args,
             training_args,
-            stage,
             return_dict=data_args.eval_on_each_dataset,
         )
 
-    with training_args.main_process_first(desc="pre-process dataset", local=(not data_args.data_shared_file_system)):
-        train_dict, eval_dict = split_dataset(dataset, eval_dataset, data_args, seed=training_args.seed)
+    with training_args.main_process_first(desc="preprocess dataset", local=(not data_args.data_shared_file_system)):
+        train_dict, eval_dict = split_dataset(train_dataset, eval_dataset, data_args, seed=training_args.seed)
         if "train" in train_dict:
-            train_dict["train"] = _get_preprocessed_dataset(
-                train_dict["train"], data_args, training_args, stage, template, tokenizer, processor, is_eval=False
-            )
+            train_dict["train"] = _preprocess_dataset(train_dict["train"], data_args, training_args, stage, template, tokenizer, processor)
         for key in eval_dict:
-            eval_dict[key] = _get_preprocessed_dataset(
-                eval_dict[key], data_args, training_args, stage, template, tokenizer, processor, is_eval=True
-            )
+            eval_dict[key] = _preprocess_dataset(eval_dict[key], data_args, training_args, stage, template, tokenizer, processor, is_eval=True)
         dataset_dict = DatasetDict({**train_dict, **eval_dict})
         if data_args.tokenized_path is not None and training_args.should_save:
             dataset_dict.save_to_disk(data_args.tokenized_path)
-            logger.info_rank0(f"Tokenized dataset is saved at {data_args.tokenized_path}.")
+            logger.info_rank0(f"Tokenized dataset saved at {data_args.tokenized_path}.")
         return get_dataset_module(dataset_dict)
