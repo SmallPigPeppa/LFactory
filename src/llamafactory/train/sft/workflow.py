@@ -1,11 +1,18 @@
-from ...data import SFTDataCollatorWith4DAttentionMask, get_dataset, get_template_and_fix_tokenizer
+from ...data import LlamaFactoryDataModule, SFTDataCollatorWith4DAttentionMask, get_dataset, get_template_and_fix_tokenizer
 from ...extras.constants import IGNORE_INDEX
 from ...extras.logging import get_logger
 from ...extras.misc import calculate_tps
 from ...model import load_model, load_tokenizer
-from ..trainer_utils import create_modelcard_and_push
-from .metric import ComputeAccuracy, eval_logit_processor
-from .trainer import CustomSeq2SeqTrainer
+from ..lightning_module import LlamaFactoryLightningModule
+from ..lightning_utils import (
+    build_lightning_trainer,
+    create_modelcard_and_push,
+    log_metrics,
+    predict_with_outputs,
+    save_metrics,
+    train_with_metrics,
+    validate_with_metrics,
+)
 
 logger = get_logger(__name__)
 
@@ -29,45 +36,50 @@ def run_sft(model_args, data_args, training_args, finetuning_args, generating_ar
         **tokenizer_module,
     )
 
-    metric_module = {}
-    if finetuning_args.compute_accuracy and not training_args.predict_with_generate:
-        metric_module["compute_metrics"] = ComputeAccuracy()
-        metric_module["preprocess_logits_for_metrics"] = eval_logit_processor
-
     gen_kwargs = generating_args.to_dict(obey_generation_config=True)
     gen_kwargs["eos_token_id"] = [tokenizer.eos_token_id] + list(getattr(tokenizer, "additional_special_tokens_ids", []))
     gen_kwargs["pad_token_id"] = tokenizer.pad_token_id
 
-    trainer = CustomSeq2SeqTrainer(
+    data_module = LlamaFactoryDataModule(dataset_module, data_collator, training_args, finetuning_args)
+    lightning_module = LlamaFactoryLightningModule(
         model=model,
-        args=training_args,
+        training_args=training_args,
         finetuning_args=finetuning_args,
-        data_collator=data_collator,
-        callbacks=callbacks,
+        tokenizer=tokenizer,
+        processor=tokenizer_module.get("processor"),
+        stage="sft",
         gen_kwargs=gen_kwargs,
-        **dataset_module,
-        **tokenizer_module,
-        **metric_module,
+        compute_accuracy=finetuning_args.compute_accuracy,
+    )
+    trainer = build_lightning_trainer(
+        training_args,
+        finetuning_args,
+        data_module,
+        callbacks=callbacks,
+        enable_validation_during_fit=training_args.do_eval,
     )
 
     if training_args.do_train:
-        train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
-        trainer.save_model()
+        metrics = train_with_metrics(trainer, lightning_module, data_module, training_args)
         if finetuning_args.include_effective_tokens_per_second:
-            train_result.metrics["effective_tokens_per_sec"] = calculate_tps(dataset_module["train_dataset"], train_result.metrics, stage="sft")
-        trainer.log_metrics("train", train_result.metrics)
-        trainer.save_metrics("train", train_result.metrics)
-        trainer.save_state()
+            metrics["effective_tokens_per_sec"] = calculate_tps(dataset_module["train_dataset"], metrics, stage="sft")
+        log_metrics("train", metrics)
+        save_metrics(training_args, "train", metrics)
 
     if training_args.do_eval:
-        metrics = trainer.evaluate(metric_key_prefix="eval", **gen_kwargs)
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
+        metrics = validate_with_metrics(trainer, lightning_module, data_module)
+        log_metrics("eval", metrics)
+        save_metrics(training_args, "eval", metrics)
 
     if training_args.do_predict:
-        predict_results = trainer.predict(dataset_module["eval_dataset"], metric_key_prefix="predict", **gen_kwargs)
-        trainer.log_metrics("predict", predict_results.metrics)
-        trainer.save_metrics("predict", predict_results.metrics)
-        trainer.save_predictions(dataset_module["eval_dataset"], predict_results, generating_args.skip_special_tokens)
+        predictions = predict_with_outputs(trainer, lightning_module, data_module)
+        predict_dataset = dataset_module.get("eval_dataset")
+        if isinstance(predict_dataset, dict):
+            predict_dataset = next(iter(predict_dataset.values()))
+        lightning_module.save_predictions(predict_dataset, predictions, generating_args.skip_special_tokens)
+        predict_output = lightning_module.collect_prediction_output(predictions)
+        metrics = {"predict_samples": len(predict_output.predictions)}
+        log_metrics("predict", metrics)
+        save_metrics(training_args, "predict", metrics)
 
-    create_modelcard_and_push(trainer, model_args, data_args, training_args, finetuning_args)
+    create_modelcard_and_push(lightning_module, model_args, data_args, training_args, finetuning_args)
