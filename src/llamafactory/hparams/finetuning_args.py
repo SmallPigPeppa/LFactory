@@ -21,7 +21,6 @@ class FinetuningArguments:
     freeze_multi_modal_projector: bool = field(default=True)
     freeze_language_model: bool = field(default=False)
 
-    plot_loss: bool = field(default=False)
     compute_accuracy: bool = field(default=False)
     disable_shuffling: bool = field(default=False)
     early_stopping_steps: int | None = field(default=None)
