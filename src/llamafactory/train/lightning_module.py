@@ -91,15 +91,23 @@ class LlamaFactoryLightningModule(pl.LightningModule):
     def _shared_loss_step(self, batch, metric_name):
         outputs = self.model(**batch)
         loss = self._loss_from_outputs(outputs)
+        # self.log(
+        #     metric_name,
+        #     loss,
+        #     on_step=(metric_name == "train_loss"),
+        #     on_epoch=True,
+        #     prog_bar=(metric_name != "train_loss"),
+        #     logger=True,
+        #     sync_dist=True,
+        #     batch_size=self._batch_size(batch),
+        # )
         self.log(
-            metric_name,
+            "train/loss",
             loss,
-            on_step=(metric_name == "train_loss"),
-            on_epoch=True,
-            prog_bar=(metric_name != "train_loss"),
+            prog_bar=True,
             logger=True,
+            batch_size=batch["input_ids"].shape[0],
             sync_dist=True,
-            batch_size=self._batch_size(batch),
         )
         return loss, outputs
 
