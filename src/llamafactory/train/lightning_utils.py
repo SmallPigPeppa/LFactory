@@ -94,7 +94,7 @@ def build_lightning_trainer(training_args, finetuning_args, data_module, callbac
     eval_strategy = _interval_strategy(getattr(training_args, "eval_strategy", getattr(training_args, "evaluation_strategy", "no")))
     trainer_kwargs = dict(
         accelerator=accelerator,
-        devices=1 if world_size > 1 else "auto",
+        devices="auto",
         strategy=strategy,
         precision=precision,
         max_steps=max_steps,
