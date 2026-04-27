@@ -84,7 +84,7 @@ def build_lightning_trainer(training_args, finetuning_args, data_module, callbac
         max_steps=max_steps,
         max_epochs=-1 if max_steps and max_steps > 0 else int(math.ceil(float(getattr(training_args, "num_train_epochs", 1.0)))),
         accumulate_grad_batches=max(1, int(getattr(training_args, "gradient_accumulation_steps", 1))),
-        gradient_clip_val=float(getattr(training_args, "max_grad_norm", 0.0) or 0.0),
+        gradient_clip_val=1.0,
         log_every_n_steps=max(1, int(getattr(training_args, "logging_steps", 1) or 1)),
         callbacks=callbacks,
         logger=get_lightning_logger(training_args),
